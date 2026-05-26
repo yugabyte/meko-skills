@@ -6,9 +6,14 @@ labels: enhancement
 assignees: ''
 ---
 
+## Skill name and maintainer
+
+<!-- For existing skills: name + current maintainer (meko or community) -->
+<!-- For new skills: proposed name + set maintainer: community in your SKILL.md -->
+
 ## What skill do you want to add or change?
 
-<!-- Skill name and a one-sentence description of what it teaches -->
+<!-- One-sentence description of what it teaches -->
 
 ## Why is this needed?
 

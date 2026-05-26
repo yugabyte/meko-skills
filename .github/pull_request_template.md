@@ -1,3 +1,8 @@
+## Skill name and maintainer
+
+<!-- e.g. meko-mcp-tools / maintainer: meko -->
+<!-- New community skill: set maintainer: community in your SKILL.md frontmatter -->
+
 ## What changed
 
 <!-- Brief description of the skill addition or change -->
@@ -22,6 +27,7 @@
 ## Checklist
 
 - [ ] Issue linked above
+- [ ] `maintainer` field set correctly in SKILL.md frontmatter (`meko` or `community`)
 - [ ] `SKILL.md` version bumped (if behavioral change to existing skill)
 - [ ] Reference files updated (if tool parameters or error handling changed)
 - [ ] Apache 2.0 source header on all new files

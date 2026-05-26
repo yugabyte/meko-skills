@@ -6,6 +6,11 @@ labels: bug
 assignees: ''
 ---
 
+## Skill name and maintainer
+
+<!-- e.g. meko-mcp-tools / maintainer: meko -->
+<!-- For community-contributed skills: maintainer: community -->
+
 ## What happened
 
 <!-- What did the agent do that was wrong? -->
@@ -14,9 +19,9 @@ assignees: ''
 
 <!-- What should the agent have done? -->
 
-## Skill name and version
+## Skill version
 
-<!-- e.g. meko-mcp-tools v1.2.0 -->
+<!-- Check the version field in the skill's SKILL.md frontmatter -->
 
 ## Test prompt
 
