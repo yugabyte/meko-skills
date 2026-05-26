@@ -15,9 +15,34 @@ specific language governing permissions and limitations under the License.
 
 # meko-skills
 
-Community-contributed agent skills for [Meko](https://mekodata.ai) — the agent-native data layer for multi-agent systems.
+Off-the-shelf agent skills for [Meko](https://mekodata.ai) — the agent-native data layer for multi-agent systems.
 
-> **What is a skill?** A skill is a markdown instruction file that teaches an AI agent how to use Meko's MCP tools correctly: when to store memories, how to search shared knowledge, how to route calls by agent identity, and how to avoid the failure modes that only show up in production.
+## Do I need this repo?
+
+Meko works without skills. Once you connect the MCP server to any AI agent, the agent has access to tools for memory, conversations, knowledge base, datapacks, and database. You tell it what to save and when:
+
+> *"Save to memory that I'm a backend engineer and we use Go."*
+>
+> *"Search my memories for what we discussed about the auth migration."*
+
+That's **on-demand mode** — Meko is a tool your agent calls when you ask it to. Many users start here and it works fine.
+
+**Skills change what happens next.** A skill is a markdown instruction file ([SKILL.md](https://agentskills.io)) that teaches your agent to use Meko *without being asked*:
+
+| Without skill | With skill installed |
+|---|---|
+| You say "save this to memory" | Agent calls `memory_add` the moment you mention your name, role, or preferences |
+| You guess at tool parameters | Agent uses correct `scope`, `agent_id`, and `datapack_id` routing on the first try |
+| You ask the same questions across sessions | Agent calls `memory_search` at session start and greets you with context |
+| Conversations vanish when the window closes | Agent preserves exchanges via `conversation_create` + `conversation_add_message` |
+
+Each layer builds on the previous:
+
+| Layer | What you get | What you install |
+|---|---|---|
+| MCP only | Tools available on demand — you tell the agent when to save | MCP server connection ([setup guide](https://docs.mekodata.ai/integrations/connect-to-ai-agent/)) |
+| MCP + Skill | Agent proactively stores memories, classifies info, uses correct parameters | + a skill from this repo |
+| MCP + Skill + Hooks | Full automatic conversation capture — every exchange persisted without prompting | + hooks (Claude Code, via the [installer](https://docs.mekodata.ai/quick-start/)) |
 
 ## What's in this repo
 
@@ -26,84 +51,53 @@ skills/
 ├── meko-mcp-tools/           # Coding agents: Claude Code, Cursor, Codex, VS Code
 │   ├── SKILL.md
 │   └── references/           # Tool catalog, cookbook, troubleshooting, etc.
-└── meko-mcp-tools-desktop/   # Claude Desktop (no session hooks)
+└── meko-mcp-tools-desktop/   # Claude Desktop, claude.ai (no session hooks)
     └── SKILL.md
 ```
 
-`meko-mcp-tools` — Behavioral guide for coding agents. Covers 23 MCP tools across memory, conversation, knowledge base, and datapack management. Includes proactive memory capture, subagent context inheritance, connection testing, and write verification patterns.
+Both skills cover 23 MCP tools across memory, conversation, knowledge base, and datapack management. The difference is how they handle session lifecycle:
 
-`meko-mcp-tools-desktop` — Behavioral guide for Claude Desktop, where there are no session hooks. Covers manual conversation capture, the deterministic `flush_pending_memory_candidates` pattern, and `claude_desktop` agent identity conventions.
+| Skill | Best for | Key difference |
+|---|---|---|
+| `meko-mcp-tools` | Claude Code, Cursor, Codex CLI, GitHub Copilot (VS Code / CLI) | Designed for coding agents — includes hook-based conversation capture and subagent coordination |
+| `meko-mcp-tools-desktop` | Claude Desktop, claude.ai | Designed for chat-first clients — more aggressive proactive-memory rules, no hook dependency |
 
-## Get started with Meko
+## Install a skill
 
-These skills teach agents how to use Meko — they don't install it. To connect an agent to Meko:
+### Prerequisites
 
-1. **Sign up** at [mekodata.ai](https://mekodata.ai) — your default datapack and API token are provisioned automatically
-2. **Connect your agent** using one of the methods below
-3. **Verify** by asking your agent: `What Meko tools do you have available?`
+You need a Meko account and an MCP server connection before installing a skill. If you haven't set that up yet:
 
-Full setup docs: [docs.mekodata.ai/quick-start](https://docs.mekodata.ai/quick-start/)
+1. **Sign up** at [mekodata.ai](https://mekodata.ai)
+2. **Connect your agent** — use the one-line installer from the portal or follow the [per-client integration guides](https://docs.mekodata.ai/integrations/connect-to-ai-agent/) (Cursor, Claude Desktop, Claude Code, Codex, VS Code)
+3. **ChatGPT** — Requires a paid plan (Plus/Pro or higher) and [Developer Mode](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt). Create a new App with the Meko MCP URL and select **OAuth** authentication. ChatGPT does not support SKILL.md, so the agent has all Meko tools but won't load a behavioral skill — you'll need to tell it when to save.
 
-### Automated install (recommended)
+### Copy the skill to your client
 
-The Meko installer configures the MCP server, session hooks, and skills in one step:
-
-```bash
-npx @yugabytedb/meko-mcp
-```
-
-This works with Claude Code, Cursor, Claude Desktop, Codex, and VS Code. It bundles the latest versions of these skills automatically.
-
-### Manual MCP configuration
-
-If you prefer to configure the MCP server yourself, point your agent at:
-
-```
-https://mcp.mekodata.ai/mcp
-```
-
-Authentication requires either an OAuth flow or an API token from the [Meko dashboard](https://cloud.mekodata.ai). See [docs.mekodata.ai](https://docs.mekodata.ai) for the full auth setup per client.
-
-## Installing skills manually
-
-If you used the automated installer, skills are already bundled. Manual install from this repo is for teams that want to pin a version, contribute changes, or use a harness the installer doesn't cover.
-
-### Claude Code
-
-Copy the skill directory into your project or personal skills folder:
+| Client | Skill | Personal path | Project path |
+|---|---|---|---|
+| Claude Code | `meko-mcp-tools` | `~/.claude/skills/meko-mcp-tools/` | `.claude/skills/meko-mcp-tools/` |
+| Cursor | `meko-mcp-tools` | *(not supported)* | `.cursor/skills/meko-mcp-tools/` |
+| Codex CLI | `meko-mcp-tools` | `~/.codex/skills/meko-mcp-tools/` | `.agents/skills/meko-mcp-tools/` |
+| GitHub Copilot (VS Code) | `meko-mcp-tools` | `~/.copilot/skills/meko-mcp-tools/` | `.github/skills/meko-mcp-tools/` |
+| Claude Desktop | `meko-mcp-tools-desktop` | `~/.claude/skills/meko-mcp-tools-desktop/` | — |
+| claude.ai (web/mobile) | `meko-mcp-tools-desktop` | Customize → Skills → upload folder as ZIP | — |
 
 ```bash
-# Project-level (this repo only)
-mkdir -p .claude/skills
-cp -r path/to/meko-skills/skills/meko-mcp-tools .claude/skills/
+# Claude Code (personal — available across all projects)
+cp -r skills/meko-mcp-tools ~/.claude/skills/meko-mcp-tools
 
-# Personal (all projects)
-cp -r path/to/meko-skills/skills/meko-mcp-tools ~/.claude/skills/
+# Cursor (per-project)
+cp -r skills/meko-mcp-tools .cursor/skills/meko-mcp-tools
+
+# Claude Desktop
+cp -r skills/meko-mcp-tools-desktop ~/.claude/skills/meko-mcp-tools-desktop
+
+# Codex CLI (personal)
+cp -r skills/meko-mcp-tools ~/.codex/skills/meko-mcp-tools
 ```
 
-See the [Claude Code skills documentation](https://code.claude.com/docs/en/skills) for details.
-
-### Cursor
-
-Cursor supports the SKILL.md standard. See Cursor's [skills documentation](https://cursor.com/help/customization/skills) for the current install path and project setup.
-
-### Claude Desktop
-
-Copy the desktop-specific skill to your personal skills directory:
-
-```bash
-cp -r path/to/meko-skills/skills/meko-mcp-tools-desktop ~/.claude/skills/
-```
-
-This skill is designed for the desktop client, which has no session hooks.
-
-### Codex CLI
-
-Codex supports the SKILL.md standard. See OpenAI's [Codex skills documentation](https://developers.openai.com/codex/skills) for the current install path and configuration.
-
-### Other agents
-
-Any MCP-compatible agent can use these skills. The SKILL.md format is an [open standard](https://agentskills.io) — place the file wherever your agent harness loads instructions from. No runtime dependencies.
+> **Note**: The [Meko installer](https://docs.mekodata.ai/quick-start/) (`npx @yugabytedb/meko-mcp`) bundles the latest skills automatically. Manual install from this repo is for teams that want to pin a version, contribute changes, or use a harness the installer doesn't cover.
 
 ## What agents need to know (cold start)
 
