@@ -1,7 +1,7 @@
 <!--
-Licensed to Yugabyte, Inc. under one or more contributor license agreements.
+Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
 See the NOTICE file distributed with this work for additional information
-regarding copyright ownership. Yugabyte licenses this file to you under
+regarding copyright ownership. YugabyteDB licenses this file to you under
 the Apache License, Version 2.0 (the "License"); you may not use this file
 except in compliance with the License. You may obtain a copy of the License at
 
@@ -26,7 +26,7 @@ Thank you for contributing. This document covers the process, standards, and leg
 By submitting a pull request to this repository, you agree that:
 
 1. Your contribution is your original work or you have the rights to submit it.
-2. You grant Yugabyte, Inc. a perpetual, irrevocable, worldwide, royalty-free license to use, reproduce, modify, distribute, and sublicense your contribution under the terms of the Apache License 2.0.
+2. You grant YugabyteDB, Inc. a perpetual, irrevocable, worldwide, royalty-free license to use, reproduce, modify, distribute, and sublicense your contribution under the terms of the Apache License 2.0.
 3. You understand that skill files in this repository are public and may be read, copied, and adapted by anyone under the Apache 2.0 license.
 
 If you are contributing on behalf of an employer, confirm that your employer permits you to submit code to open source projects under these terms.
@@ -71,7 +71,7 @@ Every new file must include the Apache 2.0 header comment. For markdown files:
 
 ```
 <!--
-Copyright 2026 Yugabyte, Inc.
+Copyright 2026 YugabyteDB, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
