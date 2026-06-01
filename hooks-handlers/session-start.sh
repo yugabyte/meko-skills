@@ -13,10 +13,14 @@ TRANSCRIPT_PATH="$(printf '%s' "$HOOK_INPUT" | node -e '
   process.stdout.write(p);
 ' 2>/dev/null)"
 
-# Spawn background checkpoint timer (periodic capture without interrupting the agent)
+# Spawn background checkpoint timer (periodic capture without interrupting the agent).
+# Send the daemon's stderr to a log file instead of /dev/null so startup
+# failures and crashes are diagnosable; stdout is still discarded.
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  MEKO_LOG_DIR="${MEKO_WATERMARK_DIR:-$HOME/.claude/meko-capture}"
+  mkdir -p "$MEKO_LOG_DIR"
   nohup node "$SCRIPT_DIR/lib/checkpoint-timer.js" "$TRANSCRIPT_PATH" \
-    </dev/null >/dev/null 2>&1 &
+    </dev/null >/dev/null 2>>"$MEKO_LOG_DIR/timer.log" &
   disown 2>/dev/null || true
 fi
 

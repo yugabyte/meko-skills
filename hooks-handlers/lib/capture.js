@@ -211,10 +211,18 @@ function extractToolResultContent(msg) {
   }
   // Fallback to toolUseResult summary if no content blocks found
   if (parts.length === 0 && msg.toolUseResult != null) {
-    const summary =
-      typeof msg.toolUseResult === "string"
-        ? msg.toolUseResult
-        : JSON.stringify(msg.toolUseResult);
+    let summary;
+    if (typeof msg.toolUseResult === "string") {
+      summary = msg.toolUseResult;
+    } else {
+      // toolUseResult is arbitrary tool output; JSON.stringify can throw on
+      // circular refs or BigInt. A capture summary must never crash the hook.
+      try {
+        summary = JSON.stringify(msg.toolUseResult);
+      } catch {
+        summary = "(unserializable tool result)";
+      }
+    }
     parts.push(truncate(summary, MAX_TOOL_RESULT_LEN));
   }
   return parts.length > 0 ? "TOOL RESULT:\n" + parts.join("\n") : "";

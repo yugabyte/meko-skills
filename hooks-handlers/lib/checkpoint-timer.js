@@ -17,7 +17,7 @@
  *   MEKO_API_KEY              Inherited by capture.js
  */
 
-const { execFileSync } = require("child_process");
+const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -57,16 +57,28 @@ function tick() {
 
   const hookInput = JSON.stringify({ transcript_path: transcriptPath });
 
-  try {
-    execFileSync("node", [captureScript, "checkpoint"], {
-      input: hookInput,
-      timeout: 30000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-  } catch (err) {
-    // Best-effort: log and continue
-    process.stderr.write(`[meko-timer] Checkpoint tick failed: ${err.message}\n`);
-  }
+  // Run capture ASYNCHRONOUSLY. execFileSync would block this daemon's event
+  // loop for up to 30s, during which SIGTERM/SIGINT (clean shutdown) can't be
+  // handled. execFile keeps the loop responsive so cleanup() fires promptly.
+  const child = execFile(
+    "node",
+    [captureScript, "checkpoint"],
+    { timeout: 30000 },
+    (err) => {
+      if (err) {
+        // Best-effort: log and continue to the next tick.
+        process.stderr.write(`[meko-timer] Checkpoint tick failed: ${err.message}\n`);
+      }
+    },
+  );
+  // The stdin stream can emit EPIPE if the child exits or fails to spawn before
+  // we finish writing. Without a listener that error is unhandled and crashes
+  // the daemon — so swallow it here; the execFile callback above reports the
+  // real failure.
+  child.stdin.on("error", (err) => {
+    process.stderr.write(`[meko-timer] Checkpoint stdin error: ${err.message}\n`);
+  });
+  child.stdin.end(hookInput);
 }
 
 setInterval(tick, INTERVAL_SECS * 1000);

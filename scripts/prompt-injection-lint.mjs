@@ -108,7 +108,8 @@ function scanFile(path) {
       const isPlaceholder = host.includes("<") || host.includes(">");
       // Per-tenant Meko instances live under *.mcp.mekodev.com; the host is
       // user-supplied, so allow the documented suffix rather than each subdomain.
-      const isMekoInstance = /\.mcp\.mekodev\.com$/.test(host);
+      // `(?:^|\.)` matches both the bare domain and any subdomain.
+      const isMekoInstance = /(?:^|\.)mcp\.mekodev\.com$/.test(host);
       if (!isPlaceholder && !isMekoInstance && !ALLOWED_HOSTS.has(host)) {
         findings.push({ path, ln, rule: "non-allowlisted-url", snippet: `${host}` });
       }
