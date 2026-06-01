@@ -14,40 +14,47 @@ specific language governing permissions and limitations under the License.
 -->
 # Datapack Lifecycle and datapack_id Routing
 
-## How datapack_id routing works
-
-1. When `datapack_id` is **omitted**: uses the default datapack for your account
-2. When `datapack_id` is **provided**: resolves connection string via Meko API, creates/reuses a cached pool for that datapack
+Datapacks are isolated workspaces — each has its own memory store and knowledge-base index. Many MCP tools accept an optional `datapack_id` to target a specific workspace; omit it to use the default.
 
 ## Which tools accept datapack_id?
 
-All **RAG** and **Memory** tools accept `datapack_id`.
-
-**Conversation** tools do NOT — they always use Langfuse.
-**Datapack management** tools do NOT — they operate on the Meko API itself.
+| Tool group | Accepts `datapack_id`? |
+|---|---|
+| **Memory** (`memory_*`) | Yes — optional, defaults to the caller's default datapack |
+| **Knowledge Base** (`knowledgebase_search`) | Yes — **required** (no default) |
+| **Conversation** (`conversation_*`) | Yes — optional; routes the call's Langfuse trace to that datapack's project (data is Langfuse-stored, not in the datapack DB itself) |
+| **Datapack management** (`datapack_*`) | Yes — optional; same Langfuse-routing role as `conversation_*`. The Meko API call itself is keyed by `name`, not id |
 
 ## How to obtain a datapack_id
 
-- From `datapack_create` response (`"id"` field)
-- From `datapack_list` (each entry has `"id"`)
-- From `datapack_describe` response
+- From `datapack_create` response (`"datapack_id"` field; `"datapack_name"` is also returned)
+- From `datapack_list` (each entry has `"datapack_id"` and `"datapack_name"`)
+- From `datapack_describe` response (same field names)
 
 ## Datapack lifecycle
 
 ### Creation
 
 ```
-datapack_create(scope="write", name="sales_analytics")
+datapack_create(scope="write", agent_id="<your agent_id>",
+    conversation_id="<uuid>", name="sales_analytics")
+-- Returns: {"datapack_id": "dp-uuid-123", "datapack_name": "sales_analytics", ...}
 ```
 
-Provisioning agents and knowledge-base sources on the datapack is **not** MCP-exposed — do that in the Meko control plane (UI at `cloud.mekodata.ai` → Datapacks, or directly via the REST API:
-`POST /datapacks/:name/agents`, `POST /datapacks/:name/knowledge-bases`). If the user asks the agent to set those up mid-session, point them to the UI rather than inventing an MCP call that will fail.
+Provisioning agents and knowledge-base sources on a new datapack is **not** MCP-exposed. Use the Meko control plane:
 
-For RAG indexes inside the datapack, use the MCP-exposed RAG tools:
+- **UI**: `app.mekodata.ai` → Datapacks → select datapack → Agents / Knowledge Bases
+- **REST**: `POST /datapacks/:name/agents`, `POST /datapacks/:name/knowledge-bases` (and the Add Knowledge UI for file uploads)
+
+If the user asks to set those up mid-session, point them at the control plane rather than inventing an MCP call that will fail.
+
+### Targeting a specific datapack on subsequent calls
 
 ```
-knowledgebase_trigger_index_creation(scope="write", source_uris="s3://...", index_name="docs", datapack_id="dp-uuid")
-knowledgebase_check_index_status(scope="read", index_name="docs", datapack_id="dp-uuid")
+memory_search(scope="read", agent_id="<your-agent-id>",
+    conversation_id="<uuid>", query="...", datapack_id="dp-uuid-123")
+knowledgebase_search(scope="read", agent_id="<your-agent-id>",
+    conversation_id="<uuid>", datapack_id="dp-uuid-123", query="...")
 ```
 
 ### Teardown (requires admin scope)
@@ -57,9 +64,9 @@ Delete child resources first (agents and KB sources via the control plane), then
 ```
 # Control-plane (REST or UI): DELETE /datapacks/sales_analytics/knowledge-bases
 # Control-plane (REST or UI): DELETE /datapacks/sales_analytics/agents/sales_agent
-datapack_delete(scope="admin", name="sales_analytics")  # MCP-exposed, destructive
+datapack_delete(scope="admin", name="sales_analytics")  # MCP-exposed, destructive, irreversible
 ```
 
-## Common mistake: mixing default and datapack namespaces
+## Common mistake: forgetting datapack_id on memory tools
 
-If you stored memories with a `datapack_id`, always query with the same `datapack_id`. Creating in the default datapack and querying in a named one (or vice versa) will return no results.
+Memory writes without `datapack_id` land in the default datapack, not the one you just created. If you `datapack_create` and then `memory_add` without passing the new datapack's id, you'll be searching the wrong store later.

@@ -1,0 +1,23 @@
+{
+  "name": "meko-agent-skills",
+  "owner": {
+    "name": "Meko",
+    "email": "info@yugabyte.com"
+  },
+  "metadata": {
+    "description": "Agent skills for YugabyteDB MCP Server and Meko platform",
+    "version": "1.2.0"
+  },
+  "plugins": [
+    {
+      "name": "meko-agent-skills",
+      "description": "Meko MCP tools for memory, conversations, datapacks, and YugabyteDB databases.",
+      "source": "./skills",
+      "strict": false,
+      "skills": [
+        "./skills/meko-mcp-tools",
+        "./skills/meko-mcp-tools-desktop"
+      ]
+    }
+  ]
+}

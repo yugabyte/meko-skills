@@ -1,0 +1,56 @@
+# verify-publish — defense-in-depth gate that runs in the PUBLIC meko-skills
+# repo on every pull request (including the automated publish PRs).
+#
+# This file is GENERATED into the public repo by the source-repo publish
+# pipeline (scripts/publish-public-verify.yml -> .github/workflows/verify-publish.yml).
+# Do not hand-edit it in the public repo — change it in meko-mcp-server.
+#
+# It re-checks the publication invariants WITHOUT needing source access or any
+# token (publish-verify.mjs ships in the bundle), then re-runs the full security
+# gate over the PR contents and validates the plugin manifest. Branch protection
+# should require this job green before merge. Nothing here auto-merges.
+
+name: verify-publish
+
+on:
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Re-check publication invariants (token-free, source-free)
+        run: node scripts/publish-verify.mjs
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+
+      - name: Secret scan (trufflehog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --results=verified,unknown --fail
+
+      - name: Prompt-injection lint
+        run: |
+          if [ -f scripts/prompt-injection-lint.mjs ]; then
+            node scripts/prompt-injection-lint.mjs skills .claude-plugin
+          else
+            echo "::warning::prompt-injection-lint.mjs not bundled; invariant check still ran"
+          fi
+
+      - name: Validate plugin manifest
+        run: npx -y @anthropic-ai/claude-code plugin validate . --strict
+
+      - name: Check skill markdown links resolve
+        run: node scripts/publish-verify.mjs

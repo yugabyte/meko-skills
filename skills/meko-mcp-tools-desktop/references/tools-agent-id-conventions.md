@@ -24,34 +24,32 @@ Memories segregate strictly by `agent_id`. Pick the right bucket up front:
 
 | Pattern | When to use | Example |
 |---|---|---|
-| `<client>:<repo-basename>` | Coding agents (Claude Code, Cursor) writing project-scoped facts. The default for almost every memory in a coding session. | `claude_code:meko-mcp-server` |
-| Loose client name | Non-coding agents (Claude Desktop, generic MCP clients) where there's no project concept. | `claude_desktop` |
+| Loose client name | Claude Desktop and other non-coding clients — there's no per-project concept, so the bare client name is the right granularity. | `claude_desktop` |
+| `<client>:<repo-basename>` | Coding agents (Claude Code, Cursor) writing project-scoped facts. **Not used by Claude Desktop**, but you'll see these values on rows written by other clients in the same datapack. | `claude_code:meko-mcp-server` |
 | `meko_agent` | Cross-project common bucket — facts any agent should see regardless of project (user identity, global preferences). The server stores empty/missing `agent_id` here automatically. | `meko_agent` |
 
-**Discover the value at session start.** The SessionStart hook injects the chosen `agent_id` into the first-turn `additionalContext` based on the cwd's repo basename. Use that value verbatim — do not re-derive it. If the block is absent, fall back to `<client>:<basename(cwd)>` or ask the user.
-
-For genuinely cross-project facts ("the user's name is Amiram", "the user prefers dark mode") write with `agent_id="meko_agent"` so future agents in different projects can read them.
+**For Claude Desktop, the practical default is `claude_desktop` for personal context and `meko_agent` for genuinely cross-client facts.** When the user's information is project-agnostic ("the user is named Amiram", "the user prefers vim"), prefer `meko_agent` so other clients (Claude Code, Cursor) can see it too.
 
 ## Valid characters
 
 The server stores `agent_id` as a row-level column value — it never becomes a PostgreSQL identifier on Cloud. Any printable string works: colons, hyphens, dots, underscores, spaces. Stay within what's readable in the UI badge.
 
-Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`, `claude-code`, `claude_code`, `cursor:<slug>`, `claude-code:-Users-...`. None of them cause errors. To query those rows, pass the literal legacy value as `agent_id` (e.g. `agent_id="agent"` for rows from before the rewrite). New writes should follow the table above.
+Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`, `claude-code`, `claude_code`, `cursor:<slug>`, `claude-code:-Users-...`, `claude-desktop` (hyphenated). None of them cause errors. To query those rows, pass the literal legacy value as `agent_id`. New writes should follow the table above.
 
 ## How agent_id filters reads and writes
 
 ### Writes — `memory_add`, `conversation_create`, `conversation_add_message`
 
 - The row stores `(meko_datapack_id, meko_user_id, meko_agent_id)` — the user_id comes from your cognito account; the datapack_id defaults or is explicit; the agent_id is what you pass.
-- If you pass an empty or whitespace-only `agent_id`, the server stores `meko_agent`. That's the common bucket — fine for cross-project facts; not what you want for project-scoped writes.
+- If you pass an empty or whitespace-only `agent_id`, the server stores `meko_agent`. That's the common bucket — fine for cross-client facts; not what you want for desktop-personal writes.
 
 ### Personal reads — `memory_search`, `memory_get_all`, `conversation_list`, `conversation_get`
 
 Filter tuple: `(datapack_id, user_id, agent_id)`.
 
 - `user_id` is **always enforced**: you can only see memories and conversations you wrote (or that other team members shared with you via promotion — see below). One user cannot read another team member's un-promoted memories directly from MCP.
-- `agent_id` is **strictly matched**: a search with `agent_id="claude_code:meko-mcp-server"` returns only rows whose stored value is exactly that. A memory written by `agent_id="cursor:foo"` is invisible to it.
-- An empty `agent_id` is rewritten to `meko_agent` server-side, so a "broad" read with empty string returns only common-bucket rows — **not** a cross-agent fan-out. To search across multiple agent_ids, call once per known value.
+- `agent_id` is **strictly matched**: a search with `agent_id="claude_desktop"` returns only rows whose stored value is exactly that. Memories written from `agent_id="claude_code:foo"` are invisible to it.
+- An empty `agent_id` is rewritten to `meko_agent` server-side, so a "broad" read with empty string returns only common-bucket rows — **not** a cross-client fan-out. To search across multiple agent_ids, call once per known value.
 
 Empirically verified 2026-05-19 on Cloud prod (free-tier multitenant mode, segregation via row-level filter).
 
@@ -92,18 +90,18 @@ knowledgebase_search(agent_id=anything, query=...)
 
 If the user asks "what do you know about X?" and you want to maximize recall:
 
-1. **First call**: `memory_search(agent_id="<your agent_id>", query="X")` — returns your own project's memories. Most relevant if the context is "what have you and I done in this repo."
-2. **Second call**: `memory_search(agent_id="meko_agent", query="X")` — returns the common cross-project bucket (user identity, global preferences). Anything you wrote with `agent_id="meko_agent"` from any agent or project, plus rows the server stored under that name when called with empty `agent_id`.
+1. **First call**: `memory_search(agent_id="claude_desktop", query="X")` — returns your desktop-personal memories.
+2. **Second call**: `memory_search(agent_id="meko_agent", query="X")` — returns the common cross-project bucket: anything written with `agent_id="meko_agent"` from any client, plus rows the server stored under that name when called with empty `agent_id`.
 3. **Third call**: `knowledgebase_search(agent_id="<anything>", datapack_id="<datapack>", query="X")` — returns team-shared knowledge. Useful when the answer may have been promoted by the user or a teammate.
 
-For a true cross-agent fan-out (e.g. you also want to see what was written from `claude_code:other-repo` or `cursor:foo`), call `memory_search` once per known agent_id — the empty-string shortcut does not bypass the filter; the server rewrites empty to `meko_agent`.
+For a true cross-agent fan-out (e.g. you also want to see what was written from `claude_code:some-repo` or `cursor:foo`), call `memory_search` once per known agent_id — the empty-string shortcut does not bypass the filter; the server rewrites empty to `meko_agent`.
 
-Always tell the user what scope you searched, so they understand why the answer is or isn't there. Example wording: "I found this in your project memories" vs. "I found this in your common cross-project bucket" vs. "I found this in your team's shared knowledge."
+Always tell the user what scope you searched, so they understand why the answer is or isn't there. Example wording: "I found this in your desktop personal memories" vs. "I found this in your common cross-project bucket" vs. "I found this in your team's shared knowledge."
 
 ## Sub-scoping within an agent
 
 Optional parameters narrow further within the same `agent_id`:
-- `user_id` — explicitly scope writes/reads to a specific end-user if your agent serves multiple (rare in Claude Code; more common in API products)
+- `user_id` — explicitly scope writes/reads to a specific end-user if your agent serves multiple (rare in Claude Desktop; more common in API products)
 - `run_id` — per-execution run
 
 Available on `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all`, `conversation_create`, `conversation_list`.
@@ -112,4 +110,4 @@ Available on `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all
 
 - `agent_id="agent"` appears on many legacy rows — it was the previous canonical constant. New writes should use the schema in the table above; query legacy rows with `agent_id="agent"` explicitly.
 - Memory Summary UI (`/datapacks/<name>/memory-summary`) is agent-id-agnostic — shows every row in the datapack, renders the stored `agent_id` as a badge. The filtering is MCP-side only.
-- Subagents spawned via the `Agent` tool in Claude Code do not automatically inherit the parent's `agent_id`. The parent must inject it into the spawn prompt. See the SKILL.md "When spawning subagents" section.
+- Subagents spawned via the `Agent` tool in Claude Code do not automatically inherit the parent's `agent_id`. The parent must inject it into the spawn prompt. See the SKILL.md "When spawning subagents" section in the coding-agent skill.

@@ -16,13 +16,13 @@ specific language governing permissions and limitations under the License.
 
 Every tool example below shows the correct parameters, expected response, and common errors. Use `scope="read"` for reads and `scope="write"` for writes — never `"all"` or any other value.
 
-> **Note on `agent_id` in the examples below.** Where you see `agent_id="agent"` in an example, substitute **your** session's `agent_id` — the value the SessionStart hook injected into `additionalContext`. For Claude Code that's `claude_code:<repo-basename>` (e.g. `claude_code:meko-mcp-server`); for Cursor, `cursor:<repo-basename>`; for Claude Desktop, the bare client name `claude_desktop`. For genuinely cross-project facts (user identity, global preferences) write/read with `agent_id="meko_agent"` — the common bucket the server stores empty/missing values into. See `tools-agent-id-conventions.md`.
+> **Note on `agent_id` in the examples below.** The string `"agent"` appears in these examples as a placeholder shorthand; it is NOT a required constant. Substitute **your** client's bucket: for Claude Desktop, the bare client name `claude_desktop`; for Claude Code/Cursor, `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). For genuinely cross-project facts (user identity, global preferences) write/read with `agent_id="meko_agent"` — the common bucket the server stores empty/missing values into. See `tools-agent-id-conventions.md`.
 
 ---
 
 ## Memory Tools
 
-**Critical:** Pass your session's `agent_id` on every memory call (the value from the SessionStart `additionalContext`, e.g. `claude_code:meko-mcp-server`). Personal writes are scoped strictly by `agent_id` — other agents won't see your writes on personal reads unless they pass the same exact value. For genuinely cross-project facts, write with `agent_id="meko_agent"` so any agent can pick them up.
+**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for client-personal context, or `meko_agent` for genuinely cross-project facts (user identity, global preferences). Personal writes are scoped strictly by `agent_id` — other agents won't see your writes on personal reads unless they pass the same exact value.
 
 ### memory_add
 
