@@ -95,7 +95,14 @@ function scanFile(path) {
     let m;
     URL_RE.lastIndex = 0;
     while ((m = URL_RE.exec(line)) !== null) {
-      const host = m[1].split("@").pop().split(":")[0].toLowerCase();
+      // Isolate the AUTHORITY first (everything before the first path / query /
+      // fragment / backslash), THEN strip userinfo. Doing it in this order
+      // defeats the bypass `https://malicious.com?ignore=@mekodata.ai`: the
+      // attacker-controlled real host is `malicious.com`, and the allowlisted
+      // name after `@` lives in the query string, not the authority. (`\` is
+      // included because browsers normalize it to `/`.)
+      const authority = m[1].split(/[/?#\\]/, 1)[0];
+      const host = authority.split("@").pop().split(":")[0].toLowerCase();
       // Template placeholders like https://<your-instance>.mcp.mekodev.com are
       // documentation, not live endpoints — the angle bracket marks them.
       const isPlaceholder = host.includes("<") || host.includes(">");

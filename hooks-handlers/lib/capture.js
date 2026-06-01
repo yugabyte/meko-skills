@@ -1180,20 +1180,35 @@ async function main() {
   // Extract and send exchanges
   const exchanges = extractExchanges(transcriptPath, lastLine);
   let captured = 0;
+  let failed = 0;
 
   for (const exchange of exchanges) {
     try {
       await addMessage(convId, agentId, exchange);
       captured++;
     } catch (err) {
+      failed++;
       process.stderr.write(`[meko-capture] Failed to add message (uuid=${exchange.user_uuid}): ${err.message}\n`);
     }
   }
 
-  // Update watermark with the resolved agent_id. If the cached value was a
-  // legacy literal we now overwrite it so subsequent hooks see the derived
-  // bucket directly.
-  writeWatermark(wmPath, convId, currentLines, agentId);
+  // Advance the watermark to currentLines ONLY when every exchange was
+  // captured. If any addMessage failed (typically a transient network error),
+  // keep the watermark at lastLine so the next checkpoint / PreCompact /
+  // SessionEnd hook re-extracts and retries this batch. Re-sending the
+  // exchanges that already succeeded is safe: capture dedups by seed
+  // (<conv_id>:<user_uuid>), so retries never create duplicates. Advancing on
+  // partial failure is what would permanently drop the failed exchanges.
+  // We still always persist the resolved agent_id (migrating any legacy literal
+  // value) so later hooks see the derived bucket directly.
+  const watermarkLine = failed === 0 ? currentLines : lastLine;
+  if (failed > 0) {
+    process.stderr.write(
+      `[meko-capture] ${failed}/${exchanges.length} exchange(s) failed; ` +
+      `holding watermark at line ${lastLine} for retry (dedup makes resends safe).\n`
+    );
+  }
+  writeWatermark(wmPath, convId, watermarkLine, agentId);
 
   // Output
   const context =

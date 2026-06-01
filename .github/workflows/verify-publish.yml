@@ -32,8 +32,18 @@ jobs:
       - name: Re-check publication invariants (token-free, source-free)
         run: node scripts/publish-verify.mjs
 
+      # Install and run the gitleaks BINARY directly rather than
+      # gitleaks/gitleaks-action@v2 — the action requires a paid GITLEAKS_LICENSE
+      # for organization repositories and would fail this token-free job. The
+      # binary is Apache-2.0 and needs no license or token.
       - name: Secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
+        run: |
+          VER=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          CFG=""
+          [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
+          /tmp/gitleaks dir . $CFG --no-banner --redact
 
       - name: Secret scan (trufflehog)
         uses: trufflesecurity/trufflehog@main
