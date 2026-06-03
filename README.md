@@ -133,6 +133,8 @@ The full behavioral guide is in the SKILL.md files. The reference docs cover too
 - **Discord**: [discord.gg/meko](https://discord.gg/meko) — `#meko-ai` for questions
 - **Docs**: [docs.mekodata.ai](https://docs.mekodata.ai)
 - **Issues / feature requests**: [GitHub Issues](https://github.com/yugabyte/meko-skills/issues)
+- **Directory review notes**: [DIRECTORY_REVIEW.md](./DIRECTORY_REVIEW.md)
+- **Security reports**: [SECURITY.md](./SECURITY.md)
 
 ## Contributing
 

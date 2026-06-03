@@ -113,6 +113,9 @@ if (!existsSync(marketplacePath)) {
   if (!entry) {
     errors.push(`marketplace missing ${PLUGIN_NAME} plugin entry`);
   } else {
+    if (entry.strict === false) {
+      errors.push(`${PLUGIN_NAME} must not set strict:false because plugin.json declares components`);
+    }
     if (entry.source !== `./${PLUGIN_NAME}`) {
       errors.push(`${PLUGIN_NAME} source must be './${PLUGIN_NAME}' when pluginRoot is './plugins' (got: ${entry.source})`);
     }
@@ -241,6 +244,35 @@ for (const f of allFiles.filter((p) => [".md", ".json", ".yml", ".yaml"].include
       errors.push(`${rel(f)} links dev host: ${m[0]}`);
     }
   }
+}
+
+
+// 9. Public directory-policy documentation required for remote services and data collection.
+const reviewDoc = join(ROOT, "DIRECTORY_REVIEW.md");
+const securityDoc = join(ROOT, "SECURITY.md");
+if (!existsSync(reviewDoc)) {
+  errors.push("missing DIRECTORY_REVIEW.md");
+} else {
+  const text = readFileSync(reviewDoc, "utf8");
+  const requiredSnippets = [
+    "https://www.yugabyte.com/privacy-policy/",
+    "conversation_add_message",
+    "https://mcp.mekodata.ai/mcp",
+    "Standard Testing Account",
+    "Working Review Examples",
+    "SECURITY.md",
+  ];
+  for (const snippet of requiredSnippets) {
+    if (!text.includes(snippet)) errors.push(`DIRECTORY_REVIEW.md missing required disclosure: ${snippet}`);
+  }
+  const exampleCount = (text.match(/Expected behavior:/g) || []).length;
+  if (exampleCount < 3) errors.push(`DIRECTORY_REVIEW.md must include at least three working examples (found ${exampleCount})`);
+}
+if (!existsSync(securityDoc)) {
+  errors.push("missing SECURITY.md");
+} else {
+  const text = readFileSync(securityDoc, "utf8");
+  if (!text.includes("security@yugabyte.com")) errors.push("SECURITY.md missing security contact");
 }
 
 if (errors.length) {
