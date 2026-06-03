@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 ---
 title: Section Index
-description: Maps reference files to their topics for the meko-mcp-tools skill
+description: Maps reference files to their topics for the meko-mcp-tools-desktop skill
 ---
 
 # Reference Sections
@@ -23,17 +23,12 @@ description: Maps reference files to their topics for the meko-mcp-tools skill
 - [tools-overview.md](tools-overview.md) — Complete catalog of all 20 tools with a decision tree
 
 ## Tool-Specific Guidance
-- [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message
-- [tools-datapack-workflow.md](tools-datapack-workflow.md) — Datapack lifecycle, datapack_id routing, and multi-database patterns
+- [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — Multi-agent model: the three buckets (project `<client>:<repo-basename>`, common `meko_agent`, loose client name), personal vs. team-shared read surfaces
+- [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message, plus Desktop capture guidance
 - [tools-rag-workflow.md](tools-rag-workflow.md) — End-to-end RAG pipeline: source registration, index creation, status polling
 
 ## Safety & Permissions
 - [tools-scope-permissions.md](tools-scope-permissions.md) — read/write/admin permission hierarchy and per-tool requirements
-
-## Conventions & Deduplication
-- [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — agent_id naming rules, hyphen prohibition, and namespace isolation
-- [tools-user-id-conventions.md](tools-user-id-conventions.md) — user_id vs agent_id: when to pass each, and how they scope memory
-- [tools-conversation-dedup.md](tools-conversation-dedup.md) — Seed-based deterministic trace IDs for Langfuse deduplication
 
 ## Practical Usage
 - [tools-cookbook.md](tools-cookbook.md) — Per-tool examples with correct parameters, expected responses, and common errors

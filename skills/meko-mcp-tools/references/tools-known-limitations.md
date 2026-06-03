@@ -24,7 +24,7 @@ There are no MCP tools to:
 - Clear stuck work queue entries
 - Reset a failed pipeline
 
-KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:name/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
+KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:name/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the underlying vector index, source records, or vector data in the datapack's database.
 
 **Workaround:** For stuck or failed indexes, create a new index with a different name. Stale indexes remain in the database until manually cleaned up by an admin.
 

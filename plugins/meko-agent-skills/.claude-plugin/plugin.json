@@ -20,6 +20,6 @@
   ],
   "skills": "./skills",
   "metadata": {
-    "connectorUrl": "MEKO_CONNECTOR_URL_PLACEHOLDER"
+    "connectorUrl": "https://mcp.mekodata.ai/mcp"
   }
 }

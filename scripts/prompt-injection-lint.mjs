@@ -103,14 +103,8 @@ function scanFile(path) {
       // included because browsers normalize it to `/`.)
       const authority = m[1].split(/[/?#\\]/, 1)[0];
       const host = authority.split("@").pop().split(":")[0].toLowerCase();
-      // Template placeholders like https://<your-instance>.mcp.mekodev.com are
-      // documentation, not live endpoints — the angle bracket marks them.
       const isPlaceholder = host.includes("<") || host.includes(">");
-      // Per-tenant Meko instances live under *.mcp.mekodev.com; the host is
-      // user-supplied, so allow the documented suffix rather than each subdomain.
-      // `(?:^|\.)` matches both the bare domain and any subdomain.
-      const isMekoInstance = /(?:^|\.)mcp\.mekodev\.com$/.test(host);
-      if (!isPlaceholder && !isMekoInstance && !ALLOWED_HOSTS.has(host)) {
+      if (!isPlaceholder && !ALLOWED_HOSTS.has(host)) {
         findings.push({ path, ln, rule: "non-allowlisted-url", snippet: `${host}` });
       }
     }

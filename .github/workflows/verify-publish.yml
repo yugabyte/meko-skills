@@ -59,7 +59,7 @@ jobs:
       - name: Prompt-injection lint
         run: |
           if [ -f scripts/prompt-injection-lint.mjs ]; then
-            node scripts/prompt-injection-lint.mjs skills .claude-plugin
+            node scripts/prompt-injection-lint.mjs skills plugins .claude-plugin
           else
             echo "::warning::prompt-injection-lint.mjs not bundled; invariant check still ran"
           fi

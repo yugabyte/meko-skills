@@ -1,0 +1,101 @@
+<!--
+Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
+See the NOTICE file distributed with this work for additional information
+regarding copyright ownership. YugabyteDB licenses this file to you under
+the Apache License, Version 2.0 (the "License"); you may not use this file
+except in compliance with the License. You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+-->
+# Complete Tool Catalog and Decision Tree
+
+**20 tools on Cloud Meko** (verified against `https://mcp.mekodata.ai/mcp`). Grouped: Memory (8), Conversation (6), Knowledge Base (1), Datapack (5).
+
+## Quick health check before using tools
+
+Before starting a session, verify that the Meko MCP tools are working:
+
+1. `memory_search(scope="read", query="test", agent_id="<your-session-agent-id>", conversation_id="<session-conversation-id>")` — Confirms memory subsystem is up. Use the `agent_id` and `conversation_id` from the SessionStart `additionalContext`. May fail with "connection already closed" — see `tools-troubleshooting.md`.
+2. `datapack_list(scope="read")` — Confirms Meko API connectivity. Returns the datapacks your token has access to.
+
+## Decision tree: which tool do I need?
+
+```
+User wants to...
+├── Search a knowledge base? ---------------> knowledgebase_search (read)
+├── Add documents to a knowledge base? -----> point user at Meko UI: Datapack → Actions → Add Knowledge
+│                                              (no MCP tool — Cloud uses UI ingestion only)
+├── Store or recall information?
+│   ├── Store a fact/preference/entity? -----------> memory_add (write)
+│   ├── Store a full conversation (multi-turn)? ---> conversation_create + conversation_add_message (write)
+│   ├── Search past knowledge? --------------------> memory_search (read)
+│   └── Retrieve a past conversation? -------------> conversation_get (read)
+└── Manage datapacks?
+    └── CRUD datapack? --------------------> datapack_create/list/describe/update/delete
+```
+
+Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typically in the Meko control-plane UI — and is not exposed as tools here.
+
+## Knowledge Base Tools (1)
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `knowledgebase_search(scope, query, agent_id, conversation_id, datapack_id, limit=10)` | read | Semantic search across KB chunks. `datapack_id` is REQUIRED (no default). |
+
+## Memory Tools (8)
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `memory_add(scope, text, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, metadata=None, messages=None, datapack_id=None)` | write | Store fact/preference/entity as long-term memory |
+| `memory_search(scope, query, agent_id, conversation_id="", user_id=None, limit=10, datapack_id=None)` | read | Semantic search across memories + graph relations. `conversation_id` optional (omit or pass `""` for cross-conversation discovery). |
+| `memory_get_by_id(scope, memory_id, agent_id, conversation_id, datapack_id=None)` | read | Direct pgvector row lookup by UUID. Preferred over `memory_search` for exact-id verification. |
+| `memory_get_all(scope, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, datapack_id=None)` | read | List all memories for agent |
+| `memory_update(scope, memory_id, text, agent_id, conversation_id, datapack_id=None)` | write | Overwrite memory text |
+| `memory_delete_by_id(scope, memory_id, agent_id, conversation_id, datapack_id=None)` | write | Delete a single memory |
+| `memory_delete_all(scope, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, datapack_id=None)` | admin | Delete all memories for agent (destructive) |
+| `flush_pending_memory_candidates(scope, agent_id)` | read | Desktop-skill helper: returns an instruction payload telling the agent to scan recent user turns and `memory_add` unsaved facts. No server-side DB write. |
+
+## Conversation Tools (6)
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `conversation_create(scope, agent_id, user_id=None, app_id=None, run_id=None, title=None, metadata=None, session_id="")` | write | Create conversation container (Langfuse session) |
+| `conversation_add_message(scope, conversation_id, agent_id, input, output=None, reasoning=None, metadata=None, seed=None, trace_id="")` | write | Add a message turn (Langfuse trace) |
+| `conversation_get(scope, conversation_id, agent_id, include_messages=False, limit=100, offset=0)` | read | Retrieve conversation, optionally with messages |
+| `conversation_list(scope, agent_id, conversation_id="", user_id=None, limit=20, offset=0)` | read | List conversations for agent. `conversation_id` optional (omit for browse). |
+| `conversation_update(scope, conversation_id, agent_id, title=None, metadata=None)` | write | Update title or metadata |
+| `conversation_delete(scope, conversation_id, agent_id)` | admin | Delete entire conversation (destructive) |
+
+## Datapack Management Tools (5)
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `datapack_create(scope, name)` | write | Create new datapack |
+| `datapack_list(scope)` | read | List all datapacks |
+| `datapack_describe(scope, name, include_status=False)` | read | Describe datapack |
+| `datapack_update(scope, name, connection_string)` | write | Update connection string |
+| `datapack_delete(scope, name)` | admin | Delete datapack (irreversible) |
+
+## Platform capabilities NOT exposed via MCP
+
+Some things the Meko platform can do are not wired into the MCP tool surface today. If a user asks about them, do not invent MCP tool calls — point them at the appropriate control plane instead. Agents attempting these as MCP tools will hit "tool not found".
+
+| Capability | Where it lives | How to reach it |
+|---|---|---|
+| Create / list / delete **agents** within a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:name/agents` (`POST/GET/DELETE /agents/:agent` for targeted deletes), or the Meko control-plane UI |
+| Add / list / delete **knowledge-base sources** on a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:name/knowledge-bases`, plus `upload-url`, `upload-complete`, `create`, `status` subroutes. Also available in the Meko UI. |
+| Langfuse project-key generation | `yugabyte/meko` API server | REST: `POST /datapacks/:name/langfuse/project-keys` |
+| Account / billing / tier management | Meko UI only | Not available via MCP or public REST |
+
+The MCP-exposed `datapack_create` / `datapack_list` / `datapack_describe` / `datapack_update` / `datapack_delete` tools above are a deliberate subset — the common CRUD that an agent reasonably needs mid-conversation. Anything involving agent or KB lifecycle is control-plane territory.
+
+For knowledge-base content on Cloud, the canonical path is **UI upload**: Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). `knowledgebase_search` queries the resulting index from MCP.
+
+## Common Parameter Patterns
+
+Every tool accepts `scope` as the first parameter. Memory and KB tools accept optional `datapack_id` to target a specific datapack. Memory and conversation tools require `agent_id` for namespace isolation (see `tools-agent-id-conventions.md`).
