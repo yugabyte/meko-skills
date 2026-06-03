@@ -21,7 +21,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 1. **Never retry the identical failed call more than once.** If it fails twice with the same error, it's not transient — diagnose the cause.
 2. **Distinguish transient vs persistent failures.** "Connection already closed" is transient (retry once). "Permission denied" is persistent (stop, don't retry).
 3. **Don't guess parameters sequentially.** If a tool fails with one parameter format, don't try 4 variations. Check this skill's docs for the correct format first.
-4. **Use your session's `agent_id` consistently.** Pass the value the SessionStart hook injected (e.g. `claude_code:<repo-basename>` for Claude Code; `claude_desktop` for Claude Desktop) on every write and every personal read. Use `agent_id="meko_agent"` deliberately on `memory_search`/`memory_get_all` only when you want the cross-project common bucket — empty string also resolves to `meko_agent`, not a cross-agent fan-out. Don't switch between forms mid-session.
+4. **Use your session's `agent_id` consistently.** For Claude Desktop the default is `claude_desktop`; for cross-project common facts use `meko_agent`. Other clients use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). Use `agent_id="meko_agent"` deliberately on `memory_search`/`memory_get_all` only when you want the common bucket — empty string also resolves to `meko_agent`, not a cross-agent fan-out. Don't switch between forms mid-session.
 
 ---
 
@@ -58,13 +58,13 @@ The only valid scope values are: `"read"`, `"write"`, `"admin"`.
 
 On the Cloud multi-tenant schema, `agent_id` is a TEXT column value — not a PostgreSQL identifier — so arbitrary strings are accepted.
 
-`agent_id` is **not a constant**. Cloud Meko supports multiple agents on one datapack, and the Cloud UI renders every `agent_id` as a badge on each row regardless of value. The canonical shape for new writes is `<client>:<repo-basename>` for coding agents (e.g. `claude_code:meko-mcp-server`), a bare client name for non-coding clients (e.g. `claude_desktop`), or `meko_agent` for the cross-project common bucket — see `tools-agent-id-conventions.md`.
+`agent_id` is **not a constant**. Cloud Meko supports multiple agents on one datapack, and the Cloud UI renders every `agent_id` as a badge on each row regardless of value. The canonical shape for new writes is `<client>:<repo-basename>` for coding agents (e.g. `claude_code:meko-mcp-server`), a bare client name for non-coding clients like Claude Desktop (`claude_desktop`), or `meko_agent` for the cross-project common bucket — see `tools-agent-id-conventions.md`.
 
 ### "My writes are landing in `meko_agent` instead of my agent's bucket"
 
 If you call `memory_add` with empty / None / whitespace `agent_id`, the server does NOT reject the write. It silently resolves the value to `meko_agent` (the cross-project common bucket) and the row lands there. The Cloud UI then shows a `meko_agent` badge instead of your client's badge.
 
-Fix: always pass a concrete non-empty `agent_id`. Fetch the value the SessionStart hook injected into `additionalContext` and pass it verbatim. Use `agent_id="meko_agent"` only when you genuinely want a fact in the cross-project pool (user identity, global preferences).
+Fix: always pass a concrete non-empty `agent_id`. For Claude Desktop use `agent_id="claude_desktop"`; for hook-driven clients (Claude Code, Cursor) fetch the value the SessionStart hook injected into `additionalContext` and pass it verbatim. Use `agent_id="meko_agent"` only when you genuinely want a fact in the cross-project pool (user identity, global preferences).
 
 ### "My reads return fewer results than I expected"
 

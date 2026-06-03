@@ -46,16 +46,33 @@ Each layer builds on the previous:
 
 ## What's in this repo
 
+This repository has three public-facing surfaces with different consumers:
+
+| Directory | Consumer | Purpose |
+|---|---|---|
+| `skills/` | Humans and harnesses that copy skills directly (Cursor, Codex, Copilot, Claude Desktop, claude.ai, etc.) | Browsable community skill source at stable paths |
+| `plugins/meko-agent-skills/` | Claude Code `/plugin` and Connector Directory packaging | Self-contained plugin bundle with its own generated copy of `skills/`, hooks, hook handlers, and `.mcp.json` |
+| `scripts/` | CI and publish verification | Token-free checks for generated public output, prompt-injection lint, and plugin readiness |
+
 ```
+.claude-plugin/
+└── marketplace.json          # Marketplace catalog; metadata.pluginRoot points at ./plugins
+plugins/
+└── meko-agent-skills/
+    ├── .claude-plugin/plugin.json
+    ├── .mcp.json             # Public Meko MCP connector config
+    ├── skills/               # Generated copy; plugin must not ../ into root skills
+    ├── hooks/
+    └── hooks-handlers/
 skills/
 ├── meko-mcp-tools/           # Coding agents: Claude Code, Cursor, Codex, VS Code
-│   ├── SKILL.md
-│   └── references/           # Tool catalog, cookbook, troubleshooting, etc.
 └── meko-mcp-tools-desktop/   # Claude Desktop, claude.ai (no session hooks)
-    └── SKILL.md
+scripts/
 ```
 
-Both skills cover 23 MCP tools across memory, conversation, knowledge base, and datapack management. The difference is how they handle session lifecycle:
+The duplication between `skills/` and `plugins/meko-agent-skills/skills/` is intentional. Anthropic plugins are copied into a plugin cache and cannot reference files outside their plugin directory with paths like `../shared-utils`, so the plugin must carry its own skill copy.
+
+Both skills cover 20 MCP tools across memory, conversation, knowledge base, and datapack management. The difference is how they handle session lifecycle:
 
 | Skill | Best for | Key difference |
 |---|---|---|
@@ -116,6 +133,8 @@ The full behavioral guide is in the SKILL.md files. The reference docs cover too
 - **Discord**: [discord.gg/meko](https://discord.gg/meko) — `#meko-ai` for questions
 - **Docs**: [docs.mekodata.ai](https://docs.mekodata.ai)
 - **Issues / feature requests**: [GitHub Issues](https://github.com/yugabyte/meko-skills/issues)
+- **Directory review notes**: [DIRECTORY_REVIEW.md](./DIRECTORY_REVIEW.md)
+- **Security reports**: [SECURITY.md](./SECURITY.md)
 
 ## Contributing
 

@@ -1,0 +1,41 @@
+# gitleaks config for the publish pipeline.
+#
+# Scope: this scans the GENERATED public output tree (and, in the public repo,
+# the PR diff) — the last line of defense behind the deny-by-default allowlist.
+# It extends the gitleaks default ruleset (do NOT replace it) and adds rules for
+# Meko / YugabyteDB credential shapes that the defaults miss.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "meko-bearer-token"
+description = "Meko/YB bearer or API token"
+# meko_… / yb_… prefixed secrets, or an Authorization: Bearer with a long opaque token
+regex = '''(?i)\b((meko|yb)_[a-z0-9]{16,})\b'''
+keywords = ["meko_", "yb_"]
+
+[[rules]]
+id = "meko-mcp-authorization-bearer"
+description = "Hardcoded Authorization: Bearer against mekodata host"
+regex = '''(?i)authorization:\s*bearer\s+[a-z0-9._\-]{20,}'''
+keywords = ["authorization", "bearer"]
+
+[[rules]]
+id = "ysql-connection-string"
+description = "Postgres/YSQL connection string with inline password"
+regex = '''postgres(?:ql)?://[^:\s]+:[^@\s]+@[^/\s]+'''
+keywords = ["postgresql://", "postgres://"]
+
+[allowlist]
+description = "Placeholders and test fixtures that are intentionally not secrets"
+regexes = [
+  # Public local-dev docs reference the local stack URL — not a secret.
+  '''http://localhost:8000/mcp''',
+  '''https://mcp\.mekodata\.ai/mcp''',
+]
+paths = [
+  # Golden fixtures contain deliberately fake frontmatter, never real secrets.
+  '''scripts/__fixtures__/.*''',
+  '''scripts/__tests__/.*''',
+]

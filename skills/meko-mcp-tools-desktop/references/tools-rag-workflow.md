@@ -32,7 +32,7 @@ creation and ingestion happen out of band — through the **Meko UI**
 knowledgebase_search(
     scope="read",
     query="natural-language question",
-    agent_id="<your agent_id>",
+    agent_id="claude_desktop",
     conversation_id="<uuid from conversation_create>",
     datapack_id="<datapack UUID — REQUIRED on this tool>",
     limit=10)

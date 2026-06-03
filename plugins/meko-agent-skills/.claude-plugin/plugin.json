@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "meko-agent-skills",
+  "version": "1.2.0",
+  "description": "Meko MCP tools for memory, conversations, datapacks, and YugabyteDB databases.",
+  "author": {
+    "name": "Meko",
+    "email": "info@yugabyte.com"
+  },
+  "homepage": "https://mekodata.ai",
+  "repository": "https://github.com/yugabyte/meko-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "memory",
+    "datapack",
+    "knowledge-base",
+    "meko",
+    "yugabytedb"
+  ],
+  "skills": "./skills",
+  "metadata": {
+    "connectorUrl": "https://mcp.mekodata.ai/mcp"
+  }
+}
