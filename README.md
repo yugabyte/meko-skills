@@ -19,7 +19,9 @@ Off-the-shelf agent skills for [Meko](https://mekodata.ai) — the agent-native 
 
 ## Do I need this repo?
 
-Meko works without skills. Once you connect the MCP server to any AI agent, the agent has access to tools for memory, conversations, knowledge base, datapacks, and database. You tell it what to save and when:
+Meko works without skills. Once you connect the MCP server to any AI agent, the agent has access to tools for memory, conversation history, knowledge base, and datapack management. [See the full list of MCP tools available](https://docs.mekodata.ai/reference/mcp-server/).
+
+You tell it what to save and when:
 
 > *"Save to memory that I'm a backend engineer and we use Go."*
 >
