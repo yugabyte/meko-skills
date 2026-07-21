@@ -23,7 +23,7 @@ Datapacks are isolated workspaces — each has its own memory store and knowledg
 | **Memory** (`memory_*`) | Yes — optional, defaults to the caller's default datapack |
 | **Knowledge Base** (`knowledgebase_search`) | Yes — **required** (no default) |
 | **Conversation** (`conversation_*`) | Yes — optional; routes the call's Langfuse trace to that datapack's project (data is Langfuse-stored, not in the datapack DB itself) |
-| **Datapack management** (`datapack_*`) | Yes — optional; same Langfuse-routing role as `conversation_*`. The Meko API call itself is keyed by `name`, not id |
+| **Datapack management** (`datapack_*`) | Yes — `datapack_describe`/`datapack_update`/`datapack_delete` address the datapack by its `datapack_id` (the Meko API routes are `/datapacks/{datapack_id}`); it also routes the call's Langfuse trace to that datapack's project |
 
 ## How to obtain a datapack_id
 
@@ -36,15 +36,15 @@ Datapacks are isolated workspaces — each has its own memory store and knowledg
 ### Creation
 
 ```
-datapack_create(scope="write", agent_id="<your agent_id>",
-    conversation_id="<uuid>", name="sales_analytics")
+datapack_create(scope="write", name="sales_analytics",
+    conversation_id="<uuid>")
 -- Returns: {"datapack_id": "dp-uuid-123", "datapack_name": "sales_analytics", ...}
 ```
 
 Provisioning agents and knowledge-base sources on a new datapack is **not** MCP-exposed. Use the Meko control plane:
 
 - **UI**: `app.mekodata.ai` → Datapacks → select datapack → Agents / Knowledge Bases
-- **REST**: `POST /datapacks/:name/agents`, `POST /datapacks/:name/knowledge-bases` (and the Add Knowledge UI for file uploads)
+- **REST**: `POST /datapacks/:datapack_id/agents`, `POST /datapacks/:datapack_id/knowledge-bases` (and the Add Knowledge UI for file uploads)
 
 If the user asks to set those up mid-session, point them at the control plane rather than inventing an MCP call that will fail.
 
@@ -62,9 +62,9 @@ knowledgebase_search(scope="read", agent_id="<your-agent-id>",
 Delete child resources first (agents and KB sources via the control plane), then the datapack:
 
 ```
-# Control-plane (REST or UI): DELETE /datapacks/sales_analytics/knowledge-bases
-# Control-plane (REST or UI): DELETE /datapacks/sales_analytics/agents/sales_agent
-datapack_delete(scope="admin", name="sales_analytics")  # MCP-exposed, destructive, irreversible
+# Control-plane (REST or UI): DELETE /datapacks/:datapack_id/knowledge-bases
+# Control-plane (REST or UI): DELETE /datapacks/:datapack_id/agents/sales_agent
+datapack_delete(scope="admin", datapack_id="dp-uuid-123")  # MCP-exposed, destructive, irreversible
 ```
 
 ## Common mistake: forgetting datapack_id on memory tools

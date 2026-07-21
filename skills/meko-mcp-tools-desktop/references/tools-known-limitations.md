@@ -24,7 +24,7 @@ There are no MCP tools to:
 - Clear stuck work queue entries
 - Reset a failed pipeline
 
-KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:name/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the underlying vector index, source records, or vector data in the datapack's database.
+KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:datapack_id/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
 
 **Workaround:** For stuck or failed indexes, create a new index with a different name. Stale indexes remain in the database until manually cleaned up by an admin.
 
@@ -60,8 +60,18 @@ It works **poorly** for:
 
 Never ingest CSV row-by-row into memory — each row becomes a fragmented fact with lost context.
 
-## No conversation search
+## Activation is model-judged on Desktop (no hooks)
 
-`conversation_list` returns conversations by agent, but there is no semantic search across conversation content. To find a specific past exchange, you need to list conversations and inspect them individually with `conversation_get`.
+Claude Desktop has no lifecycle hooks, so this skill activates only when the model judges it relevant from the skill's `description`. Reliable triggers: recall questions ("what do you know about me"), explicit save requests ("remember this"), and mentions of memory/Meko/datapacks. **Best-effort** triggers: task-shaped prompts where a durable fact appears only in passing ("I'm evaluating pnpm; I already use Turborepo") — the skill may not fire and the turn goes uncaptured. Also, when the model resolves a tool directly via tool search it may call `memory_add`/`memory_search` without reading this skill at all.
 
-For finding past knowledge by meaning, use `memory_search` instead — which is why storing key facts via `memory_add` alongside conversations is important.
+The skill description is tuned to its 1024-char ceiling; broadening it further does not close the task-shaped-prompt gap (empirically confirmed in Phase-9 testing). Mitigations, in order of leverage:
+
+1. **Personal-preferences snippet** (always-on) — paste the snippet from the Desktop setup README's "Make Desktop proactive" step into Claude's profile preferences; it is injected into every conversation regardless of prompt shape. This is the only true fix for task-shaped misses.
+2. **Server-side guidance** — the `agent_id` tool docstrings and the server's connect-time instructions name `claude_desktop` as this client's bucket, so even a skill-less tool-search call avoids the wrong-bucket (`claude_code`) write.
+3. Nothing is lost when the *user* explicitly recalls or saves — only passive capture of in-passing facts is best-effort.
+
+## No semantic search over conversation content
+
+Semantic (meaning-based) search across stored conversation content is not part of the public tool surface today. To find a past conversation, browse with `conversation_list` (by datapack) and inspect candidates with `conversation_get`.
+
+For finding past knowledge by meaning, `memory_search` remains the most reliable path — which is why storing key facts via `memory_add` alongside conversations is important.

@@ -30,6 +30,8 @@ keywords = ["postgresql://", "postgres://"]
 [allowlist]
 description = "Placeholders and test fixtures that are intentionally not secrets"
 regexes = [
+  # The connector URL placeholder is intentional until MEKO-136/141.
+  '''MEKO_CONNECTOR_URL_PLACEHOLDER''',
   # Public local-dev docs reference the local stack URL — not a secret.
   '''http://localhost:8000/mcp''',
   '''https://mcp\.mekodata\.ai/mcp''',

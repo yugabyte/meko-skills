@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Meko MCP Tools — Claude Desktop Setup
 
-Use the Meko MCP tools skill natively in Claude Desktop. The skill teaches Claude to proactively store memories, classify information, use all 20 Meko MCP tools correctly, and handle errors gracefully.
+Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all 27 Meko MCP tools correctly, and to handle errors gracefully.
 
 ## Setup
 
@@ -22,7 +22,7 @@ Use the Meko MCP tools skill natively in Claude Desktop. The skill teaches Claud
 
 **Option A — Plugin marketplace** (recommended):
 
-In Claude Desktop: Customize > Personal plugins > Browse plugin marketplace. Search for `meko-agent-skills` and install.
+In Claude Desktop: Customize > Personal plugins > Browse plugin marketplace. Search for `meko-agent-skills-claude-desktop` and install.
 
 **Option B — .skill file:**
 
@@ -90,7 +90,7 @@ Replace `/path/to/meko-mcp-server` with your cloned repo path and set the correc
 }
 ```
 
-Use the connector URL shown in the Meko Cloud portal if your workspace uses a tenant-specific endpoint.
+Get the URL from your team.
 
 Restart Claude Desktop after editing the configuration.
 
@@ -102,12 +102,42 @@ Start a new conversation and say:
 
 Claude should call `datapack_list` and return your accessible datapacks. If it works, the MCP server and skill are both connected.
 
+### Step 4 (recommended): Make Desktop proactive
+
+Claude Desktop has no lifecycle hooks, so skill activation is model-judged from the skill's description. On clean prompts ("what do you know about me?") it fires reliably, but on **task-shaped prompts that only mention a fact in passing** ("I'm evaluating pnpm vs npm; I already use Turborepo") the skill may not activate, and the turn — with its fact — goes uncaptured. See [Desktop activation ceiling](#skill-doesnt-trigger).
+
+The one always-on lever on Desktop is the **Instructions for Claude** field, which is injected into every conversation as *your* (first-party) instruction. Paste this into Claude > Settings > General > Profile > **Instructions for Claude** ("Claude will keep these in mind across chats") to close the gap:
+
+```
+About my setup: Meko (my connected MCP memory server) is my memory, knowledge,
+observability and auditing layer across chats. It learns continuously from my
+work and my team's/org's best practices. At the start of a chat, look me up
+(load the skill and connect to the MCP endpoint): call conversation_create
+(always use agent_id "claude_desktop" across all Meko calls) and either memory
+or knowledge tools, to provide better context based on past conversations and
+what I, and the team who's collaborating with me, already learned. Save to Meko
+(conversation_add_message) on a regular basis to enable memories to be
+implicitly generated in the background and for observability and audit
+compliance.
+```
+
+This is the recommended fix — and for **Sonnet- and Opus-class models it is required**, not just recommended: those models will not do proactive per-turn capture from the skill alone (see "Skill doesn't trigger" below). Eager models (Haiku, Fable) capture from the fortified skill without it; Sonnet and Opus need this always-on, first-party instruction.
+
+Why *this* wording (it was hard-won). Empirically, framings that ask the model to "log/save every exchange" — even transparent, user-owned ones — are refused by capability-cautious models as *silent standing background logging to an external server*. What unlocks proactive capture is reframing **what Meko is**: not a logging conduit but the user's own **memory / knowledge / observability / audit system of record** that learns from the user and their team. That legitimacy framing (system-of-record + collaborative + a sanctioned purpose) is what moved Opus from refusal to full proactive capture. Note also *why the Profile field specifically*: it is the only channel that is both always in context **and** carries first-party (user) authority — the skill is read at the model's discretion, and MCP `server_instructions` are treated as untrusted tool-channel data, so neither can substitute for this field on the cautious tier.
+
 ## Usage
 
 The skill triggers automatically based on context — just talk to Claude naturally:
 
-### Store personal info (triggers memory_add proactively)
+### Share personal info (captured by posting the turn via conversation_add_message)
 > I'm a backend engineer. We use Go and YugabyteDB for everything.
+
+Stated facts like this are captured when the agent posts the turn with `conversation_add_message`; the server extracts durable memories from the post. You don't need a proactive `memory_add`.
+
+### Explicitly save a fact (triggers memory_add)
+> Remember that I prefer tabs over spaces.
+
+An explicit "remember this" is one of the narrow cases where the agent calls `memory_add` directly.
 
 ### Recall memories (triggers memory_search)
 > What do you know about me?
@@ -128,9 +158,10 @@ The skill triggers automatically based on context — just talk to Claude natura
 | Skill name | `meko-mcp-tools` | `meko-mcp-tools-desktop` |
 | Installation | `claude plugin install meko-agent-skills` | Plugin marketplace / .skill file / manual |
 | MCP connection | `claude mcp add --transport http meko <url>` | `claude_desktop_config.json` |
-| Automatic capture | Hooks (SessionStart, PreCompact, SessionEnd) | Manual — ask to save conversations |
-| Periodic checkpoints | Background checkpoint timer (~10 min) | Not available |
-| agent_id | `<client>:<repo-basename>` (for example `claude_code:my-repo`) | `claude_desktop` |
+| Automatic capture | Hooks (SessionStart, PreCompact, SessionEnd) | Skill-driven — agent posts each turn via `conversation_add_message`; server extracts memories |
+| Periodic checkpoints | CronCreate (every 10 min) | Not available |
+| Proactive activation | Deterministic (SessionStart hook always injects doctrine) | Model-judged from skill description; best-effort. Backstop with a personal-preferences snippet (Step 4) |
+| agent_id | `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`) | `claude_desktop` |
 
 ## Troubleshooting
 
@@ -152,10 +183,12 @@ On Cloud Meko, `agent_id` is a row-level column value — any string works, it n
 
 ### "Conversation tools don't work"
 
-Conversation tools require Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`). The other 14 tools work without Langfuse. If you don't need conversation persistence, you can skip this.
+Conversation tools require Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`). The other 19 tools work without Langfuse. If you don't need conversation persistence, you can skip this.
 
 ### "Skill doesn't trigger"
 
 The skill activates when Claude detects relevant context (MCP tools, memory operations, database queries, etc.). If it doesn't trigger:
 1. Verify the skill appears in Customize > Skills and is enabled
 2. Try a more explicit prompt: "Use the Meko tools to store this in memory: I prefer Python."
+
+**Known limitation (hookless Desktop activation ceiling).** Unlike Claude Code — where a SessionStart hook deterministically injects the memory doctrine every session — Desktop activation is judged by the model from the skill's description alone. This works for clean semantic matches (recall questions, explicit "remember this", keyword mentions) but is best-effort for **task-shaped prompts** where a durable fact appears only in passing inside a technical question. The skill description is already tuned to its 1024-character ceiling; broadening it further does not close this gap. The reliable fix is the always-on **personal-preferences snippet** in [Step 4](#step-4-recommended-make-desktop-proactive), which is injected into every conversation regardless of the prompt. Even without it, no data is lost when the *user* explicitly asks to recall or save — only passive capture of in-passing facts is best-effort.

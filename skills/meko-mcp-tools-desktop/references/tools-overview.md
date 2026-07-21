@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Complete Tool Catalog and Decision Tree
 
-**20 tools on Cloud Meko** (verified against `https://mcp.mekodata.ai/mcp`). Grouped: Memory (8), Conversation (6), Knowledge Base (1), Datapack (5).
+**23 tools on Cloud Meko** (verified against `https://mcp.mekodata.ai/mcp`). Grouped: Memory (8), Conversation (6), Knowledge Base (1), Datapack (5), Artifacts (2), Observability (1).
 
 ## Quick health check before using tools
 
@@ -34,7 +34,11 @@ User wants to...
 │   ├── Store a fact/preference/entity? -----------> memory_add (write)
 │   ├── Store a full conversation (multi-turn)? ---> conversation_create + conversation_add_message (write)
 │   ├── Search past knowledge? --------------------> memory_search (read)
+│   ├── Share private memories with the team? -----> memory_promote (write; owner/maintainer only)
 │   └── Retrieve a past conversation? -------------> conversation_get (read)
+├── Persist or retrieve a file?
+│   ├── Upload a generated file (report, CSV, PDF)? -> artifact_put (write)
+│   └── Retrieve a previously uploaded file? -------> artifact_get (read)
 └── Manage datapacks?
     └── CRUD datapack? --------------------> datapack_create/list/describe/update/delete
 ```
@@ -58,7 +62,7 @@ Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typi
 | `memory_update(scope, memory_id, text, agent_id, conversation_id, datapack_id=None)` | write | Overwrite memory text |
 | `memory_delete_by_id(scope, memory_id, agent_id, conversation_id, datapack_id=None)` | write | Delete a single memory |
 | `memory_delete_all(scope, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, datapack_id=None)` | admin | Delete all memories for agent (destructive) |
-| `flush_pending_memory_candidates(scope, agent_id)` | read | Desktop-skill helper: returns an instruction payload telling the agent to scan recent user turns and `memory_add` unsaved facts. No server-side DB write. |
+| `memory_promote(scope, conversation_id, memory_ids, agent_id=None, datapack_id=None)` | write | Promote private memories into the datapack's shared knowledge base (moves them + graph context out of mem0, then evicts from mem0 — one-way). Owners/maintainers only; viewers/contributors get 403.
 
 ## Conversation Tools (6)
 
@@ -67,7 +71,7 @@ Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typi
 | `conversation_create(scope, agent_id, user_id=None, app_id=None, run_id=None, title=None, metadata=None, session_id="")` | write | Create conversation container (Langfuse session) |
 | `conversation_add_message(scope, conversation_id, agent_id, input, output=None, reasoning=None, metadata=None, seed=None, trace_id="")` | write | Add a message turn (Langfuse trace) |
 | `conversation_get(scope, conversation_id, agent_id, include_messages=False, limit=100, offset=0)` | read | Retrieve conversation, optionally with messages |
-| `conversation_list(scope, agent_id, conversation_id="", user_id=None, limit=20, offset=0)` | read | List conversations for agent. `conversation_id` optional (omit for browse). |
+| `conversation_list(scope, agent_id=None, limit=20, offset=0, conversation_id="", datapack_id=None)` | read | List conversations for agent within a datapack. `datapack_id` (UUID) is optional — defaults to the pinned/tenant datapack; use `datapack_list` to look it up. `conversation_id` optional (omit for browse). |
 | `conversation_update(scope, conversation_id, agent_id, title=None, metadata=None)` | write | Update title or metadata |
 | `conversation_delete(scope, conversation_id, agent_id)` | admin | Delete entire conversation (destructive) |
 
@@ -77,9 +81,24 @@ Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typi
 |------|-------|---------|
 | `datapack_create(scope, name)` | write | Create new datapack |
 | `datapack_list(scope)` | read | List all datapacks |
-| `datapack_describe(scope, name, include_status=False)` | read | Describe datapack |
-| `datapack_update(scope, name, connection_string)` | write | Update connection string |
-| `datapack_delete(scope, name)` | admin | Delete datapack (irreversible) |
+| `datapack_describe(scope, datapack_id, include_status=False)` | read | Describe datapack by UUID |
+| `datapack_update(scope, datapack_id, connection_string)` | write | Update connection string |
+| `datapack_delete(scope, datapack_id)` | admin | Delete datapack by UUID (irreversible) |
+
+## Artifact Tools (2)
+
+Content-addressed blob store scoped to a datapack. Files < 1 MB go inline in the DB; files ≥ 1 MB go to S3. Identity is SHA-256 — uploading the same bytes twice returns the same `content_hash`. Free-tier artifacts expire after 30 days of inactivity; pro-tier artifacts have no TTL.
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `artifact_put(scope, filename, content_base64, content_type, conversation_id, datapack_id=None, agent_id=None)` | write | Upload a file to the datapack. Returns `{artifact_id, content_hash, filename, size_bytes, stored_in}`. Max 5 MiB (configurable via `MEKO_MAX_ARTIFACT_UPLOAD_BYTES`). |
+| `artifact_get(scope, content_hash, conversation_id, datapack_id=None, agent_id=None)` | read | Retrieve a file by SHA-256 hash. Small files return `content_base64` inline; large files (S3) are written to `~/.meko/artifacts/<hash>/<filename>` and `local_path` is returned. |
+
+## Observability Tools (1)
+
+| Tool | Scope | Purpose |
+|------|-------|---------|
+| `track_token_usage(scope, conversation_id, name, input_tokens=0, output_tokens=0, total_tokens=None, model=None, message_id=None, datapack_id=None)` | write | Record an LLM-cost GENERATION observation on the conversation's trace. Primarily called by first-party Meko services (e.g. inference_gateway) that know their LLM's exact token counts. Most end-agents (Cursor, Claude Desktop) don't have those counts at the MCP call layer, so this tool is rarely useful for third-party agents. |
 
 ## Platform capabilities NOT exposed via MCP
 
@@ -87,9 +106,9 @@ Some things the Meko platform can do are not wired into the MCP tool surface tod
 
 | Capability | Where it lives | How to reach it |
 |---|---|---|
-| Create / list / delete **agents** within a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:name/agents` (`POST/GET/DELETE /agents/:agent` for targeted deletes), or the Meko control-plane UI |
-| Add / list / delete **knowledge-base sources** on a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:name/knowledge-bases`, plus `upload-url`, `upload-complete`, `create`, `status` subroutes. Also available in the Meko UI. |
-| Langfuse project-key generation | `yugabyte/meko` API server | REST: `POST /datapacks/:name/langfuse/project-keys` |
+| Create / list / delete **agents** within a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:datapack_id/agents` (`POST/GET/DELETE /agents/:agent` for targeted deletes), or the Meko control-plane UI |
+| Add / list / delete **knowledge-base sources** on a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:datapack_id/knowledge-bases`, plus `upload-url`, `upload-complete`, `create`, `status` subroutes. Also available in the Meko UI. |
+| Langfuse project-key generation | `yugabyte/meko` API server | REST: `POST /datapacks/:datapack_id/langfuse/project-keys` |
 | Account / billing / tier management | Meko UI only | Not available via MCP or public REST |
 
 The MCP-exposed `datapack_create` / `datapack_list` / `datapack_describe` / `datapack_update` / `datapack_delete` tools above are a deliberate subset — the common CRUD that an agent reasonably needs mid-conversation. Anything involving agent or KB lifecycle is control-plane territory.

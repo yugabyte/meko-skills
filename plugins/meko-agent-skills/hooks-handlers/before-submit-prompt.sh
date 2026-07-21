@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Cursor native beforeSubmitPrompt hook. It only reads local cache populated by
-# cursor-session-start.sh; it never performs Meko network calls.
+# Legacy Cursor native beforeSubmitPrompt hook. Cursor does not support context
+# injection from this event; native installs use SessionStart for context.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

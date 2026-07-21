@@ -131,20 +131,21 @@ There is no MCP-side "just put it in a database table" option — raw SQL access
 2. **Suggest the user upload the file** via the Cloud UI's Add Knowledge flow if it's a document (CSV files aren't in the supported list — PDF/TXT/MD/JSON/MP4 are; for CSV, convert to MD or JSON first).
 3. **Never ingest CSV row-by-row** into memory — each row becomes a fragmented fact with lost context.
 
-## Proactive Memory Storage
+## Memory Storage: automatic, not proactive
 
-Don't wait for the user to say "remember this." Store context proactively when you detect:
+On Claude Code, do **not** proactively `memory_add` facts the user states. Conversation capture is automatic (see below) and the server extracts durable memories from the captured turns on its own — personal info, team conventions, domain knowledge the user states, and corrections are all saved without a tool call. Re-storing them with `memory_add` just duplicates what extraction already holds.
 
-- **Personal info** → `memory_add`: "User is VP of Product, prefers concise responses"
-- **Team conventions** → `memory_add`: "Team uses Python for backend, Go for infrastructure"
-- **Domain knowledge** → `memory_add`: "Meko traces are decision traces that capture how and why decisions were made"
-- **Corrections** → `memory_add`: "User corrected: always use 'resilience' instead of 'high availability'"
+Explicit `memory_add` is reserved for the three cases automatic extraction cannot reach:
+
+- **Explicit request** → the user says "remember this" / "save this."
+- **Output-only / tool-derived fact** → a durable fact that lives only in your output or a tool result, never in a user turn. Extraction reads only the user turn, so it never sees these.
+- **Overwriting correction** → a prior fact was negated and the stale memory must not survive. Extraction is additive (it adds the new fact but leaves the old one live), so `memory_search` for the stale memory and `memory_update` / `memory_delete_by_id` it.
 
 Use `memory_search` at the start of sessions to recall what you already know before asking the user to repeat themselves.
 
 ## Using Both Together
 
-A common pattern: store the full conversation (preserves structure) AND extract key facts with `memory_add` (enables semantic search later).
+Capture stores the full conversation (preserves structure) and extraction derives searchable memories from it — both happen automatically. Add an explicit `memory_add` only for the three cases above.
 
 ## Key Retrieval Difference
 
@@ -155,7 +156,7 @@ A common pattern: store the full conversation (preserves structure) AND extract 
 
 The Meko plugin captures conversations automatically via three mechanisms:
 
-1. **Periodic checkpoint (~10 min)** — Coding-agent hooks run a background checkpoint timer that calls `conversation_add_message` without interrupting the active turn
+1. **Periodic checkpoint (~10 min)** — Agent-driven via CronCreate, uses `conversation_add_message` MCP tool directly
 2. **PreCompact hook** — Shell script that fires before Claude Code's auto-compaction, captures via MCP JSON-RPC
 3. **SessionEnd hook** — Shell script that fires at session termination, captures final exchanges
 

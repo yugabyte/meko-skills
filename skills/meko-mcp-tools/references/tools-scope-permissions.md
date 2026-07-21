@@ -35,28 +35,31 @@ Higher scopes include lower scopes. An unrecognized scope string always fails.
 
 | Tool | Group |
 |------|-------|
-| `knowledgebase_search` | RAG |
+| `knowledgebase_search` | Knowledge Base & Retrieval |
 | `memory_search` | Memory |
 | `memory_get_by_id` | Memory |
 | `memory_get_all` | Memory |
-| `flush_pending_memory_candidates` | Memory |
 | `conversation_get` | Conversation |
 | `conversation_list` | Conversation |
 | `datapack_list` | Datapack |
 | `datapack_describe` | Datapack |
+| `artifact_get` | Artifacts |
 
-### write scope (8 tools)
+### write scope (11 tools)
 
 | Tool | Group |
 |------|-------|
 | `memory_add` | Memory |
 | `memory_update` | Memory |
 | `memory_delete_by_id` | Memory |
+| `memory_promote` | Memory |
 | `conversation_create` | Conversation |
 | `conversation_add_message` | Conversation |
 | `conversation_update` | Conversation |
 | `datapack_create` | Datapack |
 | `datapack_update` | Datapack |
+| `track_token_usage` | Observability |
+| `artifact_put` | Artifacts |
 
 ### admin scope (3 tools — destructive, irreversible)
 

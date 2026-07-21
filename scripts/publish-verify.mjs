@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 /**
  * publish-verify — token-free, source-free self-check that ships INTO the
- * public meko-skills repo.
+ * public meko-skills repo (copied verbatim by the publish generator).
  *
- * It enforces the public repo invariants needed by Claude Code plugin
- * marketplaces and Anthropic Connector Directory review: marketplace sources
- * resolve correctly, plugins are self-contained, public connector metadata is
- * present, generated skill links resolve, and public docs do not point at
- * private source repos or dev hosts.
+ * The public repo cannot reach the private source repo and holds no tokens, so
+ * it cannot re-run the full generator. Instead this script re-derives the
+ * PUBLICATION INVARIANTS that the generator guarantees and asserts they hold
+ * across the committed public tree. It is defense-in-depth: if a human edits a
+ * published file in a way that breaks an invariant (strips the license header,
+ * reverts the Apache tag, drops the connector URL, breaks bundle self-
+ * containment, or links a private repo/dev host), this fails the PR.
+ *
+ * Run from the public repo root: `node scripts/publish-verify.mjs`
+ * No external dependencies — Node built-ins only.
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
@@ -31,6 +36,9 @@ under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 -->`;
+
+// Leading YAML frontmatter block: `---` on line 1 through the next `---` line.
+const FRONTMATTER_BLOCK = /^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/;
 
 const errors = [];
 
@@ -71,6 +79,18 @@ function resolvePluginSource(source, pluginRoot) {
   return resolve(base, source);
 }
 
+/**
+ * The canonical header may sit at the very top (files without frontmatter) or
+ * immediately after a leading frontmatter block (SKILL.md), so `---` stays on
+ * line 1 for Claude Code's loader. Accept either placement, reject anything else.
+ */
+function hasCanonicalHeader(text) {
+  const block = LICENSE_HEADER + "\n";
+  if (text.startsWith(block)) return true;
+  const fm = text.match(FRONTMATTER_BLOCK);
+  return !!fm && text.slice(fm[0].length).startsWith(block);
+}
+
 const allFiles = [];
 listFiles(ROOT, allFiles);
 const mdFiles = allFiles.filter((p) => extname(p) === ".md");
@@ -78,11 +98,23 @@ const publishedMdFiles = mdFiles.filter(
   (p) => hasAncestor(p, join(ROOT, "skills")) || hasAncestor(p, join(ROOT, "plugins", PLUGIN_NAME, "skills")),
 );
 
-// 1. Every published skill markdown file carries the exact canonical header.
+// 1. Every published skill markdown file carries the exact canonical header (at
+//    the top, or just below frontmatter).
 for (const f of publishedMdFiles) {
   const text = readFileSync(f, "utf8");
-  if (!text.startsWith(LICENSE_HEADER + "\n")) {
+  if (!hasCanonicalHeader(text)) {
     errors.push(`missing/altered license header: ${rel(f)}`);
+  }
+}
+
+// 1b. Every SKILL.md must open with its YAML frontmatter on line 1 — the loader
+//     and `claude plugin validate` ignore a skill whose `---` is pushed below an
+//     HTML comment (regression guard: the license header must go AFTER, not
+//     ABOVE, the frontmatter).
+for (const f of mdFiles.filter((p) => p.endsWith("SKILL.md"))) {
+  const text = readFileSync(f, "utf8");
+  if (!FRONTMATTER_BLOCK.test(text)) {
+    errors.push(`SKILL.md frontmatter is not on line 1 (header above it?): ${rel(f)}`);
   }
 }
 
@@ -155,12 +187,14 @@ for (const p of requiredPluginPaths) {
   }
 }
 
-// 5. Plugin and MCP connector config point at the public Meko MCP endpoint.
+// 5. The connector endpoint lives in .mcp.json (its only supported home), and
+// plugin.json carries NO `metadata` block — a `metadata` field fails
+// `claude plugin validate --strict` and Claude ignores it at load time.
 const pluginJsonPath = pluginDir ? join(pluginDir, ".claude-plugin", "plugin.json") : null;
 if (pluginJsonPath && existsSync(pluginJsonPath)) {
   const pj = readJson(pluginJsonPath, `${rel(pluginJsonPath)}`);
-  if (pj?.metadata?.connectorUrl !== PUBLIC_CONNECTOR_URL) {
-    errors.push(`connector URL is not the public endpoint (got: ${pj?.metadata?.connectorUrl})`);
+  if (pj?.metadata !== undefined) {
+    errors.push(`plugin.json carries a 'metadata' block that fails 'claude plugin validate --strict'`);
   }
   if (pj?.skills !== "./skills") {
     errors.push(`plugin skills path must be './skills' (got: ${pj?.skills})`);
@@ -175,8 +209,6 @@ if (mcpJsonPath && existsSync(mcpJsonPath)) {
     errors.push(`${rel(mcpJsonPath)} mcpServers.meko.url must be ${PUBLIC_CONNECTOR_URL} (got: ${url})`);
   }
 }
-
-
 
 // 6. Root community skills and plugin-contained skills are generated from the
 // same source and must not drift.
@@ -203,18 +235,23 @@ if (pluginDir) {
   }
 }
 
-// 7. Every local markdown link in every SKILL.md resolves, and every backticked
+// 7. Every local markdown link in every PUBLISHED markdown file resolves
+// (SKILL.md AND reference files like _sections.md — a section index that links
+// a deleted reference is a broken link CI must catch), and every backticked
 // tools-*.md reference in a SKILL.md points to an existing sibling reference.
-for (const skill of mdFiles.filter((p) => p.endsWith("SKILL.md"))) {
-  const text = readFileSync(skill, "utf8");
+for (const md of publishedMdFiles) {
+  const text = readFileSync(md, "utf8");
   for (const m of text.matchAll(/\[[^\]]+\]\(([^)]+\.md)(?:#[^)]+)?\)/g)) {
     const target = m[1];
     if (/^[a-z]+:/i.test(target)) continue;
-    const targetPath = join(dirname(skill), target);
+    const targetPath = join(dirname(md), target);
     if (!existsSync(targetPath)) {
-      errors.push(`${rel(skill)} links missing markdown file: ${target}`);
+      errors.push(`${rel(md)} links missing markdown file: ${target}`);
     }
   }
+}
+for (const skill of mdFiles.filter((p) => p.endsWith("SKILL.md"))) {
+  const text = readFileSync(skill, "utf8");
   const refDir = join(dirname(skill), "references");
   for (const m of text.matchAll(/`(tools-[a-z0-9-]+\.md)`/g)) {
     if (!existsSync(join(refDir, m[1]))) {
@@ -246,11 +283,19 @@ for (const f of allFiles.filter((p) => [".md", ".json", ".yml", ".yaml"].include
   }
 }
 
-
-// 9. Public directory-policy documentation required for remote services and data collection.
+// 9. Public directory-policy documentation required for remote services and
+// data collection. These governance docs are OWNED by the public meko-skills
+// repo — the courier never generates them (it writes only skills/, plugins/,
+// .claude-plugin/, hooks*). So this section runs only against the real public
+// tree, detected by README.md (present in the public repo, never emitted by
+// the courier). In the source-CI's isolated generated-bundle check there is no
+// README, so the governance-doc gate is correctly skipped there.
+const inPublicRepo = existsSync(join(ROOT, "README.md"));
 const reviewDoc = join(ROOT, "DIRECTORY_REVIEW.md");
 const securityDoc = join(ROOT, "SECURITY.md");
-if (!existsSync(reviewDoc)) {
+if (!inPublicRepo) {
+  // Generated-bundle context (no governance docs by design) — skip section 9.
+} else if (!existsSync(reviewDoc)) {
   errors.push("missing DIRECTORY_REVIEW.md");
 } else {
   const text = readFileSync(reviewDoc, "utf8");
@@ -268,11 +313,13 @@ if (!existsSync(reviewDoc)) {
   const exampleCount = (text.match(/Expected behavior:/g) || []).length;
   if (exampleCount < 3) errors.push(`DIRECTORY_REVIEW.md must include at least three working examples (found ${exampleCount})`);
 }
-if (!existsSync(securityDoc)) {
-  errors.push("missing SECURITY.md");
-} else {
-  const text = readFileSync(securityDoc, "utf8");
-  if (!text.includes("security@yugabyte.com")) errors.push("SECURITY.md missing security contact");
+if (inPublicRepo) {
+  if (!existsSync(securityDoc)) {
+    errors.push("missing SECURITY.md");
+  } else {
+    const text = readFileSync(securityDoc, "utf8");
+    if (!text.includes("security@yugabyte.com")) errors.push("SECURITY.md missing security contact");
+  }
 }
 
 if (errors.length) {

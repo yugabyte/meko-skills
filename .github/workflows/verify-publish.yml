@@ -65,7 +65,14 @@ jobs:
           fi
 
       - name: Validate plugin manifest
-        run: npx -y @anthropic-ai/claude-code plugin validate . --strict
+        # Validate BOTH the marketplace catalog at the root AND the nested
+        # plugin directly. Root validation resolves the catalog/source but does
+        # NOT recurse into the plugin manifest, so a strict violation inside
+        # plugins/meko-agent-skills (e.g. an unknown `metadata` field) is only
+        # caught by validating the nested plugin dir explicitly.
+        run: |
+          npx -y @anthropic-ai/claude-code plugin validate . --strict
+          npx -y @anthropic-ai/claude-code plugin validate plugins/meko-agent-skills --strict
 
       - name: Check skill markdown links resolve
         run: node scripts/publish-verify.mjs

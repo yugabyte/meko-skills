@@ -1,3 +1,12 @@
+---
+name: meko-mcp-tools
+description: Behavioral guide for AI agents using Meko MCP tools. Triggers when calling MCP tools, storing memories, persisting knowledge, managing datapacks, or searching shared knowledge bases through Meko.
+license: Apache-2.0
+metadata:
+  author: Meko
+  version: "3.0.0"
+  tags: mcp, tools, datapack, memory, conversation, rag, meko
+---
 <!--
 Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
 See the NOTICE file distributed with this work for additional information
@@ -12,19 +21,13 @@ under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 -->
----
-name: meko-mcp-tools
-description: Behavioral guide for AI agents using Meko MCP tools. Triggers when calling MCP tools, storing memories, persisting knowledge, managing datapacks, or searching shared knowledge bases through Meko.
-license: Apache-2.0
-metadata:
-  author: Meko
-  version: "2.4.0"
-  tags: mcp, tools, datapack, memory, conversation, rag, meko
----
 
 # Meko MCP Tools — Agent Behavioral Guide
 
-Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 20 MCP tools — and more importantly, **when to use them proactively** without waiting to be asked.
+Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 23 MCP tools.
+
+
+**Read this first.** On Claude Code, conversation capture is automatic (SessionStart / PreCompact / SessionEnd hooks) and the Meko server extracts durable memories from the captured turns on its own. Facts the user states in conversation are saved for you — you do **not** proactively call `memory_add` for them. Your active jobs are: **recall** what's already known (`memory_search`, `knowledgebase_search`), and the **few** save cases automatic extraction cannot reach. Details below.
 
 ## What Meko enables
 
@@ -68,15 +71,14 @@ See `tools-agent-id-conventions.md` for the full model, including how promotion 
 
 Some pre-existing rows in real datapacks use the older `agent_id="agent"` constant or other ad-hoc shapes (`claude_code`, `cursor:<slug>`). They remain readable — query them with `agent_id="agent"` explicitly. New writes should follow the schema above.
 
-## Critical: Use Meko tools, not local storage
+## Critical: Use Meko, not local storage
 
-**When Meko MCP tools are available, ALWAYS use them instead of local/built-in storage mechanisms.** Do not write to local memory files, markdown notes, or any file-based memory system. Meko's memory is persistent across all agents, sessions, and team members — local files are not.
+**Meko is the memory store — never write memories to local files, markdown notes, or any file-based memory system.** Meko's memory is persistent across all agents, sessions, and team members; local files are not. On Claude Code, memory reaches Meko two ways, and neither is a local file:
 
-- User shares personal info → call `memory_add` on the MCP server, NOT write to a local file
-- User asks what you know → call `memory_search` on the MCP server, NOT read local files
-- Conversation worth preserving → call `conversation_create`, NOT save to a local log
+- **Automatic capture + extraction** (the dominant path) — the hooks capture this session's turns and the server extracts memories from them. Facts the user states are stored without any tool call from you.
+- **Explicit `memory_add`** (the narrow path) — only for the cases extraction can't reach (see "When to call memory_add" below).
 
-If a Meko tool call fails, you may fall back to local storage and tell the user — but Meko is always the first choice.
+To recall, call `memory_search` on the MCP server, NOT read local files. If a Meko read/write call fails, you may fall back to local storage and tell the user — but Meko is always the first choice.
 
 ## When spawning subagents
 
@@ -126,48 +128,38 @@ If the inherited block is **absent**, the subagent MUST NOT guess — see the se
 
 Subagents cannot auto-discover the parent's watermark today: Claude Code does not expose a `CLAUDE_PARENT_SESSION_ID` env var or any equivalent marker file to subagent processes (see the spike note in `skills/hooks-handlers/lib/capture.js`). Prompt injection is the only enforcement mechanism.
 
-## Core principle: Be Meko's persistent brain
+## Core principle: capture is automatic — recall, don't re-store
 
-**Do not wait for the user to say "save this to memory."** Proactively store context that would be valuable in future sessions. Think of Meko as your long-term memory that persists across conversations.
+Meko is your long-term memory, but on Claude Code you do **not** build it by hand. The hooks capture every turn of this session and the server extracts durable memories from them automatically. **A fact the user states in conversation — name, role, preferences, org conventions, corrections, casual asides — is already saved. Calling `memory_add` for it just duplicates what extraction stored.** (Verified empirically: the server extracts conversationally-stated facts verbatim, including multi-fact turns and precise multi-clause facts.)
 
-### Proactive behavior rules
+So your Meko reflexes are:
 
-| Signal in conversation | What to do | Tool to use |
-|---|---|---|
-| User shares personal info ("I'm Amiram", "I'm a VP of Product") | Store as personal memory immediately | `memory_add` |
-| User states a preference ("I prefer dark mode", "always use Python") | Store as personal preference | `memory_add` |
-| User shares org convention ("we write in Go", "our standard is X") | Store as organizational memory | `memory_add` |
-| User teaches domain knowledge ("Meko traces are decision traces") | Store as memory; consider suggesting they promote it to Shared Knowledge from the Learnings tab | `memory_add` |
-| User corrects your behavior ("don't do X, do Y instead") | Store the correction as a learning | `memory_add` |
-| User asks "what do you know about X?" | Three-call sweep: your project's memories, then the cross-project common bucket, then team-shared knowledge | `memory_search(agent_id=<yours>)` → `memory_search(agent_id="meko_agent")` → `knowledgebase_search` |
-| User asks "what do we (as a team) know about X?" or about uploaded documents | Query the team's Shared Knowledge directly | `knowledgebase_search` (returns uploaded docs + promoted memories) |
-| Session produced a valuable multi-turn exchange | Preserve the full conversation | `conversation_create` + `conversation_add_message` |
-| Significant learnings accumulated during session | Offer to persist key takeaways; remind the user they can promote important ones to Shared Knowledge from the Cloud UI | Summarize and propose `memory_add` calls |
-| User provides structured/tabular data (CSV, data dictionary) | Not natively supported via MCP. Store the key facts as memories or point the user at the UI's knowledge-base upload for file form | `memory_add` for facts, UI "Add Knowledge" for files |
-| User wants to add documents to the team's knowledge base | Point them at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). The MCP ingestion tools are not available on Cloud. | UI only |
+1. **Recall first.** When the user asks what's known, or before you act on something they may have an opinion about, search — don't assume.
+2. **Save only what capture can't reach** (the three narrow cases below).
+3. **Never** re-store a fact the user just said. **Never** write memories to local files.
 
-### Information classification
+### When the user shares information
 
-When the user shares information, classify it before storing:
+| Signal in conversation | What to do |
+|---|---|
+| User states a fact about themselves, their team, tools, or preferences | **Nothing — automatic capture + extraction stores it.** Just answer. |
+| User corrects your behavior or negates a prior fact ("actually, we use Nomad now") | The new fact is captured automatically, but extraction is **additive** — it does not remove the old one. If a stale, contradicted memory must not survive, `memory_search` for it and `memory_update` / `memory_delete_by_id`. |
+| User explicitly says "remember this" / "save this to memory" | `memory_add` (verbatim). This is the clearest explicit-save case. |
+| A durable fact appears only in YOUR output or a tool result, never in the user's words | `memory_add`. Extraction reads only the **user** turn, so facts you derive or a tool surfaces are never captured otherwise. |
+| User asks "what do you know about X?" | Three-call sweep: `memory_search(agent_id=<yours>)` → `memory_search(agent_id="meko_agent")` → `knowledgebase_search`. |
+| User asks "what do we (as a team) know about X?" or about uploaded documents | `knowledgebase_search` (returns uploaded docs + promoted memories). |
+| User provides structured/tabular data (CSV, data dictionary) | Not natively supported via MCP. Point the user at the UI's Add Knowledge upload; do not `memory_add` row-by-row. |
+| User wants to add documents to the team's knowledge base | Point them at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). MCP ingestion tools are not available on Cloud. |
 
-```
-User says something → Classify:
-├── About themselves (name, role, preferences)
-│   → memory_add — personal profile
-├── About how their team/org works (conventions, standards, policies)
-│   → memory_add — personal memory; the user can promote it to Shared
-│      Knowledge from the UI's Learnings tab so teammates see it too
-├── Domain knowledge (facts, definitions, specs, research)
-│   → memory_add for quick recall; for bulk documents, the user uploads
-│      files via the UI's Datapack → Actions → Add Knowledge flow
-├── A correction or learning ("don't do X", "always do Y")
-│   → memory_add — behavioral feedback
-├── Full conversation worth preserving (multi-turn, reasoning traces)
-│   → conversation_create + conversation_add_message — verbatim
-└── Structured/tabular data (CSV rows, schemas, data dictionaries)
-    → Not natively supported via MCP. Extract key facts via memory_add,
-      or tell the user this isn't an MCP feature.
-```
+### When to call memory_add (the whole list)
+
+Automatic capture handles the rest, so explicit `memory_add` is reserved for exactly three cases:
+
+1. **Explicit request** — the user says "remember this" / "save this."
+2. **Output-only / tool-derived fact** — a durable fact that lives only in the assistant's output or a tool result, never in a user turn (extraction only sees the user turn).
+3. **Overwriting correction** — a prior fact was negated and the stale memory must not survive (extraction is additive; pair `memory_add`/`memory_update` with a `memory_delete_by_id` of the old one).
+
+When you do call it, store the fact verbatim in the user's own words; do not summarize.
 
 ## Automatic conversation capture
 
@@ -216,9 +208,11 @@ If a relevant feedback memory exists (e.g., "always ask before deleting content"
 In the examples below, `<your-agent-id>` means the value the SessionStart hook injected into `additionalContext` — for Claude Code, something like `claude_code:meko-mcp-server`. Not the literal string `"<your-agent-id>"`.
 
 ### memory_add — correct call pattern
+
+Only for the three narrow cases in "When to call memory_add" above — not for facts the user stated in conversation (those are captured automatically). The example below is an explicit "remember this" save:
 ```
 memory_add(scope="write",
-           text="User is VP of Product at YugabyteDB",
+           text="Remember: deploy scripts must be run from the repo root, never a subdir",
            agent_id="<your-agent-id>",
            conversation_id="<session_conversation_id>")
 ```
@@ -289,7 +283,7 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 ## Key concepts
 
-1. **20 tools in 4 groups**: Memory (8), Conversation (6), Knowledge Base (1 — `knowledgebase_search`), Datapack (5). KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
+1. **23 tools in 6 groups**: Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (1 — `knowledgebase_search`), Datapack (5), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
 2. **Scope hierarchy**: `read < write < admin` — every tool validates scope at entry. Only three valid values: `"read"`, `"write"`, `"admin"`. Using anything else (e.g., `"all"`) will fail. Tool docstrings sometimes say `"Pass 'admin'"` but the code only requires `"read"` or `"write"` — use the minimum the code actually enforces.
 3. **datapack_id routing**: DB, RAG, and memory tools accept optional `datapack_id` (default datapack if omitted). `knowledgebase_search` is the exception: `datapack_id` is **required** there.
 4. **agent_id is multi-agent**: Each client+project uses its own `agent_id` (shape `<client>:<repo-basename>`). Writes are scoped to `(datapack_id, user_id, agent_id)`. Personal reads (`memory_search`, `memory_get_all`) filter strictly on this tuple. Empty/missing `agent_id` lands in the `meko_agent` common bucket — use it explicitly for cross-project facts. `knowledgebase_search` ignores `agent_id` entirely and returns the team-shared knowledge on the datapack. See `tools-agent-id-conventions.md`.
@@ -305,7 +299,7 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 20 tools with decision tree |
+| `tools-overview.md` | Complete catalog of all 23 tools with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-datapack-workflow.md` | Datapack lifecycle and datapack_id routing |

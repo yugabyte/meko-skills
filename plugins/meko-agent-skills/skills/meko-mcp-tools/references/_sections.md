@@ -1,3 +1,7 @@
+---
+title: Section Index
+description: Maps reference files to their topics for the meko-mcp-tools skill
+---
 <!--
 Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
 See the NOTICE file distributed with this work for additional information
@@ -12,15 +16,11 @@ under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
 CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 -->
----
-title: Section Index
-description: Maps reference files to their topics for the meko-mcp-tools skill
----
 
 # Reference Sections
 
 ## Tool Selection & Catalog
-- [tools-overview.md](tools-overview.md) — Complete catalog of all 20 tools with a decision tree
+- [tools-overview.md](tools-overview.md) — Complete catalog of all 23 tools with a decision tree
 
 ## Tool-Specific Guidance
 - [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message
