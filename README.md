@@ -142,12 +142,12 @@ The full behavioral guide is in the SKILL.md files. The reference docs cover too
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). The short version: open an issue first, then submit a PR with a test prompt that verifies your change works against a live MCP server.
 
+## Privacy Policy
+[Privacy Policy](https://www.yugabyte.com/privacy-policy/) when using [Meko](https://cloud.mekodata.ai)
+
 ## License
 
 Apache 2.0. See [LICENSE](./LICENSE).
-
-## Privacy Policy
-[Privacy Policy](https://www.yugabyte.com/privacy-policy/)
 ---
 
 *Meko is a product of [YugabyteDB, Inc.](https://yugabyte.com)*
