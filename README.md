@@ -146,6 +146,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). The short version: open an issue first
 
 Apache 2.0. See [LICENSE](./LICENSE).
 
+## Privacy Policy
+[Privacy Policy](https://www.yugabyte.com/privacy-policy/)
 ---
 
 *Meko is a product of [YugabyteDB, Inc.](https://yugabyte.com)*
