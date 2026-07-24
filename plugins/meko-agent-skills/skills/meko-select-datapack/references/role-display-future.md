@@ -36,15 +36,11 @@ Do not invent values, do not normalize the casing, do not display `"Owner"` if t
 
 Note that the upstream Go source (`/Users/amiram.mizne/sandbox/GitHub/meko/api_server/internal/models/models.go`) does NOT declare `grant` on the `Datapack` struct — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
-## Other fields the live response includes
+## Counts on the list response
 
-Beyond the columns the skill renders by default, `datapack_list` returns counts that may be useful in some flows:
+`datapack_list` does not carry usable count fields. The list handler on the Meko server doesn't run the per-datapack queries that populate `memory_count`, `knowledge_count`, `learnings_count`, or `collective_memory_count` — all four are zero on every row (`models.Datapack` declares them without `omitempty`, so the zeros survive JSON marshalling). The MCP client strips all four before returning so callers aren't misled.
 
-- `memory_count` — total memories the caller has under this datapack (per `(user_id, agent_id)` scoping).
-- `knowledge_count` — knowledge-base entries on the datapack.
-- `learnings_count` — promoted-to-shared memories on the datapack.
-
-These aren't in the spec column set. Don't add them silently. If the user asks for counts, render them on request — and read the numbers from the live response, never invent them.
+If the user asks for counts, call `datapack_describe(datapack_id=...)` on the specific rows they care about — that's the path that runs the count queries. Don't invent numbers or claim zero from the list response.
 
 ## Sharing UI vs API state
 

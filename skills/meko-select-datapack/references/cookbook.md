@@ -22,7 +22,7 @@ Concrete transcripts of the flows the skill supports. All examples assume `agent
 
 **Skill:**
 ```
-> datapack_list(scope="read", conversation_id="<conv-id>")
+> datapack_list(conversation_id="<conv-id>")
 [14 entries returned]
 
 Your datapacks (showing 1-10 of 14):
@@ -80,7 +80,7 @@ onward the hook injection makes it automatic.
 **Skill:** Goes straight to substring filter; no need to render the full list.
 
 ```
-> datapack_list(scope="read", conversation_id="<conv-id>")
+> datapack_list(conversation_id="<conv-id>")
 [14 entries returned, filtering by "prod-research"]
 
 One match: `prod-research`. Pinning.
@@ -97,7 +97,7 @@ If the substring matches 2+ rows, the skill re-renders just those rows numbered 
 **Skill:** invokes proactively when no pin exists.
 
 ```
-> datapack_list(scope="read", conversation_id="<conv-id>")
+> datapack_list(conversation_id="<conv-id>")
 [1 entry returned]
 
 Only one datapack: `meko-local-setup`. Auto-selecting.
@@ -143,7 +143,7 @@ The pin is the project default; per-call overrides are still allowed.
 **Skill:** Don't update the pin. Just pass `datapack_id` for this one call:
 
 ```
-> knowledgebase_search(scope="read", query="H2 launch deadline",
+> knowledgebase_search(query="H2 launch deadline",
                        datapack_id="4c2e…a991",       # ← q2-roadmap-deck, override
                        agent_id="claude_code:meko-mcp-server",
                        conversation_id="<conv-id>")

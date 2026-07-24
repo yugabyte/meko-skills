@@ -3,15 +3,15 @@ name: meko-select-datapack
 description: >-
   Lists the user's Meko datapacks, shows authorization, supports search and
   pagination, and pins one as the active datapack for the current project.
-  Triggers when the user says things like "switch datapack", "use datapack
-  <name>", "list my datapacks", "which datapack am I on", "pin <name>", or
+  Triggers when the user says things like "switch datapack", "use the Acme
+  datapack", "list my datapacks", "which datapack am I on", "pin Acme", or
   any request to change or inspect the active datapack. Also trigger before
   the first Meko MCP write of a session if no datapack pin exists and the
   user has more than one datapack.
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.1.0"
+  version: "1.1.1"
   tags: meko, datapack, selection, project, claude-code
 ---
 <!--
@@ -75,7 +75,7 @@ Do NOT invoke this skill for routine reads on an already-pinned project — the 
 ### 1. List
 
 ```
-datapack_list(scope="read", conversation_id="<your conversation_id>")
+datapack_list(conversation_id="<your conversation_id>")
 ```
 
 The deployed Meko server returns an array of objects. The fields the skill uses:
@@ -84,9 +84,9 @@ The deployed Meko server returns an array of objects. The fields the skill uses:
 - `datapack_name` — human-readable name.
 - `created_at` — ISO timestamp.
 - `grant` — role string (`"owner"`, etc.) — the actual authorization field. Display this verbatim in the Role column. Do not invent or normalize it.
-- `memory_count`, `knowledge_count`, `learnings_count` — included on the live response for any datapack the caller can read; safe to render but not part of the spec columns.
+- Count fields (`memory_count`, `knowledge_count`, `learnings_count`, `collective_memory_count`) — the list handler on Meko doesn't compute any of them (they'd need per-datapack queries; only `Describe` runs those). All four arrive as stale zeros; the MCP client strips them from the list response so callers aren't misled. Use `datapack_describe(datapack_id=...)` when you need real counts for a specific datapack.
 
-If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(scope='write', name='<name>')` to make one, or visit the Meko Cloud console."* Stop.
+If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>')` to make one, or visit the Meko Cloud console."* Stop.
 
 If the response has exactly **one** entry, **auto-select it**. Print: *"Only one datapack: `<name>`. Auto-selecting. Run the skill again with `clear` to unset."* Skip the table; jump straight to step 4 (persist) and step 5 (confirm).
 
@@ -98,7 +98,7 @@ For 2+ datapacks, render a numbered table. **Page size 10.** Default sort: `crea
 #   Name                                   Role    Created       Active?
 ```
 
-Do NOT add columns that aren't in this list. If you want to surface count fields like `memory_count`, ask the user first — they're not part of the spec.
+Do NOT add columns that aren't in this list. Note that `memory_count` / `knowledge_count` are NOT on the list response — call `datapack_describe` per-datapack if the user asks for real counts.
 
 **Determine the pin state first** (before printing anything). Read the `### Active datapack` block from your `additionalContext` if present, else `cat ~/.claude/meko-capture/pin-<slug(agent_id)>.json` (see step 4 for slug computation). Then print one of these two header lines verbatim, *exactly* as shown — copy them word-for-word, do not paraphrase:
 

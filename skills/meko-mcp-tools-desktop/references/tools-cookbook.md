@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Tool Cookbook — Complete Usage Examples
 
-Every tool example below shows the correct parameters, expected response, and common errors. Use `scope="read"` for reads and `scope="write"` for writes — never `"all"` or any other value.
+Every tool example below shows the correct parameters, expected response, and common errors.
 
 > **Note on `agent_id` in the examples below.** The string `"agent"` appears in these examples as a placeholder shorthand; it is NOT a required constant. Substitute **your** client's bucket: for Claude Desktop, the bare client name `claude_desktop`; for Claude Code/Cursor, `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). For genuinely cross-project facts (user identity, global preferences) write/read with `agent_id="meko_agent"` — the common bucket the server stores empty/missing values into. See `tools-agent-id-conventions.md`.
 
@@ -29,7 +29,7 @@ Every tool example below shows the correct parameters, expected response, and co
 **When to use:** NOT for facts the user states — those are captured when you post the turn with `conversation_add_message` and the server extracts them. Reserve `memory_add` for the three cases per-turn capture can't reach: (1) the user explicitly says "remember this"; (2) a durable fact only in your output or a tool result, never in a user turn; (3) overwriting a negated/corrected fact (pair with `memory_delete_by_id`, since extraction is additive).
 
 ```
-memory_add(scope="write", agent_id="claude_desktop",
+memory_add(agent_id="claude_desktop",
     text="Remember: deploy scripts must be run from the repo root, never a subdir.")
 ```
 
@@ -40,7 +40,7 @@ memory_add(scope="write", agent_id="claude_desktop",
 
 **With user scoping:**
 ```
-memory_add(scope="write", agent_id="agent", user_id="amiram",
+memory_add(agent_id="agent", user_id="amiram",
     text="Prefers Python for backend, Go for infrastructure.")
 ```
 
@@ -58,8 +58,10 @@ memory_add(scope="write", agent_id="agent", user_id="amiram",
 
 **When to use:** Find relevant memories by meaning. Always try this before asking the user to repeat information.
 
+**Cross-conversation discovery.** `memory_search` returns hits across every stored conversation for the `(datapack_id, user_id)` pair, across all agents (the tool intentionally passes `meko_agent_id=None` to mem0, so the `agent_id` argument scopes the trace but does not filter results). When a hit references an interesting conversation, follow up with `conversation_list` to browse the associated threads and `conversation_get` to read a specific one — the memory hit's `meko_conversation_id` field is the id to fetch. Pass `run_id` on the search itself to narrow to a single conversation up front.
+
 ```
-memory_search(scope="read", query="What programming language does the team use?", agent_id="agent")
+memory_search(query="What programming language does the team use?", agent_id="agent")
 ```
 
 **Response:**
@@ -69,7 +71,7 @@ memory_search(scope="read", query="What programming language does the team use?"
 
 **With limit:**
 ```
-memory_search(scope="read", query="user preferences", agent_id="agent", limit=5)
+memory_search(query="user preferences", agent_id="agent", limit=5)
 ```
 
 ---
@@ -79,12 +81,12 @@ memory_search(scope="read", query="user preferences", agent_id="agent", limit=5)
 **When to use:** List everything stored for an agent. Useful at session start to load context.
 
 ```
-memory_get_all(scope="read", agent_id="agent")
+memory_get_all(agent_id="agent")
 ```
 
 **With user scoping:**
 ```
-memory_get_all(scope="read", agent_id="agent", user_id="amiram")
+memory_get_all(agent_id="agent", user_id="amiram")
 ```
 
 ---
@@ -92,7 +94,7 @@ memory_get_all(scope="read", agent_id="agent", user_id="amiram")
 ### memory_get_by_id
 
 ```
-memory_get_by_id(scope="read", memory_id="mem-uuid-123", agent_id="agent")
+memory_get_by_id(memory_id="mem-uuid-123", agent_id="agent")
 ```
 
 ---
@@ -102,7 +104,7 @@ memory_get_by_id(scope="read", memory_id="mem-uuid-123", agent_id="agent")
 **When to use:** Overwrite a specific memory's text. Requires the memory UUID.
 
 ```
-memory_update(scope="write", memory_id="mem-uuid-123", text="Updated: Team uses Go for all new services", agent_id="agent")
+memory_update(memory_id="mem-uuid-123", text="Updated: Team uses Go for all new services", agent_id="agent")
 ```
 
 ---
@@ -110,17 +112,17 @@ memory_update(scope="write", memory_id="mem-uuid-123", text="Updated: Team uses 
 ### memory_delete_by_id
 
 ```
-memory_delete_by_id(scope="write", memory_id="mem-uuid-123", agent_id="agent")
+memory_delete_by_id(memory_id="mem-uuid-123", agent_id="agent")
 ```
 
 ---
 
 ### memory_delete_all
 
-**Destructive. Requires admin scope.** Deletes all memories for the agent.
+**Destructive.** Deletes all memories for the agent. For removing a single memory, prefer `memory_delete_by_id` — `memory_delete_all` wipes the entire agent scope in the datapack.
 
 ```
-memory_delete_all(scope="admin", agent_id="agent")
+memory_delete_all(agent_id="agent")
 ```
 
 ---
@@ -130,7 +132,7 @@ memory_delete_all(scope="admin", agent_id="agent")
 **When to use:** The user asks to share or promote specific memories to the team's knowledge base — the MCP counterpart of the Cloud UI's "Promote to Knowledge" flow. One-way: promoted memories become team-visible via `knowledgebase_search` and are evicted from the private memory store. Requires the caller to be a datapack **owner or maintainer**; viewers and contributors get a 403 permission error.
 
 ```
-memory_promote(scope="write", memory_ids=["mem-uuid-123", "mem-uuid-456"],
+memory_promote(memory_ids=["mem-uuid-123", "mem-uuid-456"],
     agent_id="claude_desktop", conversation_id="<uuid from conversation_create>")
 ```
 
@@ -139,7 +141,9 @@ memory_promote(scope="write", memory_ids=["mem-uuid-123", "mem-uuid-456"],
 {"inserted_ids": ["mem-uuid-123"], "updated_ids": ["mem-uuid-456"], "not_found_ids": []}
 ```
 
-Get the memory ids from the `id` field of `memory_search` / `memory_get_all` results. Confirm with the user before promoting — it moves private memories into shared, team-visible knowledge and cannot be undone from MCP.
+Get exact UUIDs from the `id` field of `memory_search` / `memory_get_all` results; never use graph relation IDs. Before the call, show the user each exact memory and UUID, explain that promotion is team-visible, one-way, and evicts the private records, then obtain explicit confirmation for those candidates. Pass the active `conversation_id` and intended `agent_id` / `datapack_id`; on legacy schemas that expose `scope`, use `write`, not `admin`.
+
+On 403, authentication, or permission failure, report the error and stop — do not escalate scope, change datapacks, or alter identity. After a successful call, `knowledgebase_search` may verify shared visibility, but it is not a rollback mechanism.
 
 ---
 
@@ -150,7 +154,7 @@ Get the memory ids from the `id` field of `memory_search` / `memory_get_all` res
 **When to use:** Start storing a multi-turn exchange. Do this when the session contains valuable dialog worth preserving.
 
 ```
-conversation_create(scope="write", agent_id="agent", user_id="amiram",
+conversation_create(agent_id="agent", user_id="amiram",
     title="Debugging the auth middleware")
 ```
 
@@ -168,7 +172,7 @@ conversation_create(scope="write", agent_id="agent", user_id="amiram",
 Leave `index_for_search` at its default (`False`). Conversation-cache embedding is currently a WorkbenchLM-only feature — the inference gateway opts in on its own turns; agent-harness conversations should not opt in.
 
 ```
-conversation_add_message(scope="write", conversation_id="conv-uuid-123", agent_id="agent",
+conversation_add_message(conversation_id="conv-uuid-123", agent_id="agent",
     input="Why is the auth middleware returning 401?",
     output="The token validation is checking the wrong issuer claim...",
     reasoning="Checked the middleware source, found issuer mismatch between config and JWT...")
@@ -176,7 +180,7 @@ conversation_add_message(scope="write", conversation_id="conv-uuid-123", agent_i
 
 **With dedup seed (use when client hooks also write to Langfuse):**
 ```
-conversation_add_message(scope="write", conversation_id="conv-uuid-123", agent_id="agent",
+conversation_add_message(conversation_id="conv-uuid-123", agent_id="agent",
     input="Why is the auth middleware returning 401?",
     output="The token validation is checking the wrong issuer claim...",
     seed="conv-uuid-123:agent:Why is the auth middleware returning 401?")
@@ -187,7 +191,7 @@ conversation_add_message(scope="write", conversation_id="conv-uuid-123", agent_i
 ### conversation_get
 
 ```
-conversation_get(scope="read", conversation_id="conv-uuid-123", agent_id="agent",
+conversation_get(conversation_id="conv-uuid-123", agent_id="agent",
     include_messages=True, limit=50)
 ```
 
@@ -200,7 +204,7 @@ pinned/default datapack, or pass the pinned `datapack_id`. Use `datapack_list`
 to look up the id.
 
 ```
-conversation_list(scope="read", datapack_id="<datapack-uuid>", agent_id="agent", limit=20)
+conversation_list(datapack_id="<datapack-uuid>", agent_id="agent", limit=20)
 ```
 
 ---
@@ -208,7 +212,7 @@ conversation_list(scope="read", datapack_id="<datapack-uuid>", agent_id="agent",
 ### conversation_update
 
 ```
-conversation_update(scope="write", conversation_id="conv-uuid-123", agent_id="agent",
+conversation_update(conversation_id="conv-uuid-123", agent_id="agent",
     title="Resolved: Auth middleware issuer mismatch")
 ```
 
@@ -216,10 +220,10 @@ conversation_update(scope="write", conversation_id="conv-uuid-123", agent_id="ag
 
 ### conversation_delete
 
-**Destructive. Requires admin scope.**
+**Destructive.**
 
 ```
-conversation_delete(scope="admin", conversation_id="conv-uuid-123", agent_id="agent")
+conversation_delete(conversation_id="conv-uuid-123", agent_id="agent")
 ```
 
 ---
@@ -236,7 +240,6 @@ See `tools-rag-workflow.md` for the decision table.
 
 ```
 knowledgebase_search(
-    scope="read",
     query="natural-language question",
     agent_id="agent",
     conversation_id="<uuid from conversation_create>",
@@ -263,7 +266,6 @@ Populated KBs return results with chunk content and similarity scores. An empty/
 
 ```
 artifact_put(
-    scope="write",
     filename="analysis_report.csv",
     content_type="text/csv",
     content_base64="<base64-encoded bytes>",
@@ -299,7 +301,6 @@ Save the `content_hash` — it's the retrieval key for `artifact_get`.
 **Small files (< 1 MB) — content returned inline:**
 ```
 artifact_get(
-    scope="read",
     content_hash="a665a45920422f9d417e4867efdc4fb8a5f1f89ea5b8440b1ad4c4c6b8a7e4d3",
     conversation_id="<uuid from conversation_create>",
     agent_id="claude_desktop"
@@ -339,16 +340,20 @@ For large files use `local_path` to read the file. S3 URLs are never exposed.
 ### datapack_create / datapack_list / datapack_describe
 
 ```
-datapack_create(scope="write", name="analytics_prod")
-datapack_list(scope="read")  # returns datapack_id for each datapack
-datapack_describe(scope="read", datapack_id="<uuid>", include_status=True)
+datapack_create(name="analytics_prod")
+datapack_list()  # returns datapack_id for each datapack
+datapack_describe(datapack_id="<uuid>", include_status=True)
 ```
 
 ### datapack_update / datapack_delete
 
+`datapack_update` renames or edits a datapack's description. At least one of `name` / `description` must be provided (or the tool returns `nothing_to_update`). The server refuses to rename `meko_default_datapack` — the error is `"meko_default_datapack cannot be renamed"`. Passing `description=""` does NOT clear an existing description.
+
 ```
-datapack_update(scope="write", datapack_id="<uuid>", connection_string="postgresql://...")
-datapack_delete(scope="admin", datapack_id="<uuid>")  # Irreversible!
+datapack_update(datapack_id="<uuid>", name="renamed-datapack")
+datapack_update(datapack_id="<uuid>", description="new description")
+datapack_update(datapack_id="<uuid>", name="x", description="y")
+datapack_delete(datapack_id="<uuid>")  # Irreversible!
 ```
 
 ### Agent and knowledge-base management (NOT MCP — control-plane only)

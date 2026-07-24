@@ -36,7 +36,7 @@ Datapacks are isolated workspaces — each has its own memory store and knowledg
 ### Creation
 
 ```
-datapack_create(scope="write", name="sales_analytics",
+datapack_create(name="sales_analytics",
     conversation_id="<uuid>")
 -- Returns: {"datapack_id": "dp-uuid-123", "datapack_name": "sales_analytics", ...}
 ```
@@ -51,20 +51,20 @@ If the user asks to set those up mid-session, point them at the control plane ra
 ### Targeting a specific datapack on subsequent calls
 
 ```
-memory_search(scope="read", agent_id="<your-agent-id>",
+memory_search(agent_id="<your-agent-id>",
     conversation_id="<uuid>", query="...", datapack_id="dp-uuid-123")
-knowledgebase_search(scope="read", agent_id="<your-agent-id>",
+knowledgebase_search(agent_id="<your-agent-id>",
     conversation_id="<uuid>", datapack_id="dp-uuid-123", query="...")
 ```
 
-### Teardown (requires admin scope)
+### Teardown
 
 Delete child resources first (agents and KB sources via the control plane), then the datapack:
 
 ```
 # Control-plane (REST or UI): DELETE /datapacks/:datapack_id/knowledge-bases
 # Control-plane (REST or UI): DELETE /datapacks/:datapack_id/agents/sales_agent
-datapack_delete(scope="admin", datapack_id="dp-uuid-123")  # MCP-exposed, destructive, irreversible
+datapack_delete(datapack_id="dp-uuid-123")  # MCP-exposed, destructive, irreversible
 ```
 
 ## Common mistake: forgetting datapack_id on memory tools

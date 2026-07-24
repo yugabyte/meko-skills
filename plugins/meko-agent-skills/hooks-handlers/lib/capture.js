@@ -367,6 +367,45 @@ function datapackPinSlug(agentId) {
   return trimmed.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || COMMON_BUCKET_AGENT_ID;
 }
 
+function captureErrorPath(agentId) {
+  return path.join(WATERMARK_DIR, `last-capture-error-${datapackPinSlug(agentId)}.json`);
+}
+
+function readCaptureError(agentId) {
+  try {
+    const error = JSON.parse(fs.readFileSync(captureErrorPath(agentId), "utf-8"));
+    return error && typeof error === "object" ? error : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCaptureError(agentId, error) {
+  try {
+    fs.mkdirSync(WATERMARK_DIR, { recursive: true });
+    fs.writeFileSync(
+      captureErrorPath(agentId),
+      JSON.stringify({
+        ...error,
+        agent_id: agentId,
+        occurred_at: new Date().toISOString(),
+      }),
+    );
+  } catch (err) {
+    process.stderr.write(`[meko-capture] Could not persist capture error: ${err.message}\n`);
+  }
+}
+
+function clearCaptureError(agentId) {
+  try {
+    fs.unlinkSync(captureErrorPath(agentId));
+  } catch (err) {
+    if (err && err.code !== "ENOENT") {
+      process.stderr.write(`[meko-capture] Could not clear capture error: ${err.message}\n`);
+    }
+  }
+}
+
 /**
  * Read the active-datapack pin written by the meko-select-datapack skill.
  *
@@ -470,6 +509,16 @@ function mcpPost(jsonBody) {
         res.on("data", (chunk) => (data += chunk));
         res.on("end", () => {
           inflightRequests.delete(req);
+          if (res.statusCode >= 400) {
+            const snippet = data.trim().replace(/\s+/g, " ").slice(0, 200);
+            const err = new Error(
+              `MCP HTTP ${res.statusCode}${snippet ? `: ${snippet}` : ""}`,
+            );
+            err.statusCode = res.statusCode;
+            err.responseBody = data.slice(0, 1000);
+            reject(err);
+            return;
+          }
           // Notifications return 202/204 with no body — that's OK
           if (!data.trim()) {
             resolve({ body: null, headers: res.headers });
@@ -533,6 +582,51 @@ function parseMcpResponseBody(data) {
     throw new Error("SSE response did not include a data payload");
   }
   return JSON.parse(payload);
+}
+
+function classifyPersistentCaptureFailure(err) {
+  const message = err && err.message ? String(err.message) : String(err || "");
+  const normalized = message.toLowerCase();
+  const statusCode = Number(err && err.statusCode);
+  const statusMatch = normalized.match(/\bmcp http (402|403)\b/);
+  let persistentStatus = null;
+  if (statusCode === 402 || statusCode === 403) {
+    persistentStatus = statusCode;
+  } else if (statusMatch) {
+    persistentStatus = Number(statusMatch[1]);
+  }
+
+  if (persistentStatus) {
+    return {
+      code: `http_${persistentStatus}`,
+      reason: `Meko rejected capture with HTTP ${persistentStatus}`,
+    };
+  }
+
+  const persistentPatterns = [
+    ["free_tier_limit_reached", /free[_\s-]?tier.*limit|free_tier_limit_reached/],
+    ["quota_exceeded", /quota[_\s-]?(reached|exceeded)|(?:reached|exceeded).*quota/],
+    ["usage_limit_reached", /usage[_\s-]?limit[_\s-]?(reached|exceeded)/],
+    ["plan_limit_reached", /plan[_\s-]?limit[_\s-]?(reached|exceeded)/],
+    ["payment_required", /payment[_\s-]?required/],
+    ["subscription_required", /subscription[_\s-]?(required|inactive|expired)/],
+    ["entitlement_denied", /entitlement.*(denied|required|missing)|(?:denied|required|missing).*entitlement/],
+  ];
+  for (const [code, pattern] of persistentPatterns) {
+    if (pattern.test(normalized)) {
+      const reasons = {
+        free_tier_limit_reached: "the free-tier capture limit was reached",
+        quota_exceeded: "the capture quota was exceeded",
+        usage_limit_reached: "the capture usage limit was reached",
+        plan_limit_reached: "the current plan's capture limit was reached",
+        payment_required: "capture requires payment",
+        subscription_required: "capture requires an active subscription",
+        entitlement_denied: "the account is not entitled to capture conversations",
+      };
+      return { code, reason: reasons[code] };
+    }
+  }
+  return null;
 }
 
 /**
@@ -654,7 +748,6 @@ function peekTranscriptMetadata(transcriptPath) {
  */
 async function fetchRecentMemories(agentId, datapackId = null, { limit = 10, budget = 2000 } = {}) {
   const payload = {
-    scope: "read",
     agent_id: agentId,
     conversation_id: "00000000-0000-0000-0000-000000000000",
     limit,
@@ -680,7 +773,6 @@ async function fetchRecentMemories(agentId, datapackId = null, { limit = 10, bud
 
 async function createConversation(sessionId, agentId, metadata = null, datapackId = null) {
   const payload = {
-    scope: "write",
     agent_id: agentId,
     title: "Claude Code session (auto-captured)",
     session_id: sessionId,
@@ -702,7 +794,6 @@ async function createConversation(sessionId, agentId, metadata = null, datapackI
 async function addMessage(convId, agentId, exchange, datapackId = null) {
   const seed = `${convId}:${exchange.user_uuid}`;
   const payload = {
-    scope: "write",
     conversation_id: convId,
     agent_id: agentId,
     input: exchange.input,
@@ -745,14 +836,20 @@ function hookOutput(additionalContext) {
   // emitting it for lifecycle capture hooks makes Codex reject the JSON.
   if (process.argv[2] !== "session-start") return "{}";
 
-  // Emit the native coding-agent harness field while preserving the nested
-  // Claude-compatible shape for clients that still consume it.
+  // Codex rejects unknown top-level fields, so its SessionStart response must
+  // contain only the hook-specific output defined by the Codex wire schema.
   const output = {
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       additionalContext: additionalContext || "",
     },
   };
+  if (process.env.MEKO_HOOK_CLIENT === "codex") {
+    return JSON.stringify(output);
+  }
+
+  // Preserve the native coding-agent harness field for clients that consume
+  // it alongside the nested Claude-compatible shape.
   output.additional_context = additionalContext || "";
   return JSON.stringify(output);
 }
@@ -858,9 +955,17 @@ function buildSessionStartContext(convId, sessionId, agentId, memories, opts) {
   const resolvedAgentId = agentId || COMMON_BUCKET_AGENT_ID;
   const resumed = Boolean(opts && opts.resumed);
   const pin = opts && opts.datapackPin ? opts.datapackPin : null;
+  const captureError = opts && opts.captureError ? opts.captureError : null;
   const opening = resumed
-    ? `Resuming Meko conversation **${convId}** from a prior Claude Code session. The watermark file is written — PreCompact and SessionEnd hooks will append this session's new exchanges to the same conversation.`
-    : `Meko conversation **${convId}** was created automatically by the SessionStart hook. The watermark file is written — PreCompact and SessionEnd hooks will capture this session's transcript verbatim.`;
+    ? `Resuming Meko conversation **${convId}** from a prior Claude Code session. The watermark file is written — PreCompact and SessionEnd hooks will attempt to append this session's new exchanges to the same conversation.`
+    : `Meko conversation **${convId}** was created automatically by the SessionStart hook. The watermark file is written — PreCompact and SessionEnd hooks are configured to capture this session's transcript.`;
+  const captureWarning = captureError
+    ? `
+
+### Automatic capture warning — tell the user
+
+The last automatic capture attempt was persistently rejected because ${captureError.reason || "Meko rejected the write"}. **Do not claim that this session's turns are being saved.** The hook kept ${Number(captureError.held_exchanges || captureError.failed_exchanges) || 1} exchange(s) queued for retry instead of dropping them. Tell the user that automatic conversation capture is currently unhealthy and include this reason. This warning remains until a later hook write succeeds.`
+    : "";
   const memoryBlock =
     Array.isArray(memories) && memories.length > 0
       ? `
@@ -876,16 +981,16 @@ ${memories.join("\n")}`
   return `## Meko Session Active
 
 ${opening}
+${captureWarning}
 
 ### What you MUST do with Meko tools
 
 - **agent_id**: use "${resolvedAgentId}" verbatim for every Meko MCP tool call in this session. This was derived from the cwd as \`<client>:<repo-basename>\` so memories stay scoped to this project. For genuinely cross-project facts (user identity, global preferences) pass agent_id="${COMMON_BUCKET_AGENT_ID}" — that's the common bucket any agent can read regardless of project.
 - **conversation_id**: Use "${convId}" for all MCP tool calls that accept it
-- **scope**: Only "read", "write", or "admin"
 
-### Memory capture is automatic — do NOT proactively call memory_add
+### Memory capture is automatic only when hook delivery succeeds — do NOT proactively call memory_add
 
-This session's turns are captured to Meko by the hooks above, and the server extracts durable memories from them on its own. **Any fact the user states in conversation — their name, role, preferences, org conventions, corrections — is captured without you doing anything.** Do not call memory_add for facts the user says out loud; it duplicates what extraction already stores.
+The hooks above attempt to capture this session's turns, and the server extracts durable memories from successfully delivered turns on its own. Do not call memory_add for facts the user says out loud; when hook delivery succeeds, that would duplicate what extraction already stores. If the warning above is present, tell the user instead of pretending an explicit memory write will bypass the same server rejection.
 
 Call memory_add (with the session's agent_id + conversation_id) ONLY for the narrow cases extraction cannot reach:
 - The user explicitly says "remember this" / "save this to memory".
@@ -913,7 +1018,6 @@ The SessionStart hook could not reach the Meko MCP server to create a conversati
 
 - **agent_id**: use "${resolvedAgentId}" for project-scoped writes; use "${COMMON_BUCKET_AGENT_ID}" for cross-project common facts
 - **conversation_id**: Use nil UUID "00000000-0000-0000-0000-000000000000" as placeholder
-- **scope**: Only "read", "write", or "admin"
 
 ### Proactive storage (capture is down — do NOT wait to be asked)
 
@@ -1001,7 +1105,10 @@ async function handleSessionStart(hookInput) {
         sessionId,
         resumedAgentId,
         null,
-        { datapackPin: existingDatapackPin },
+        {
+          datapackPin: existingDatapackPin,
+          captureError: readCaptureError(resumedAgentId),
+        },
       );
       writeSessionCache(sessionId, {
         status: "ready",
@@ -1048,7 +1155,11 @@ async function handleSessionStart(hookInput) {
         sessionId,
         resumedAgentId,
         null,
-        { resumed: true, datapackPin: priorDatapackPin },
+        {
+          resumed: true,
+          datapackPin: priorDatapackPin,
+          captureError: readCaptureError(resumedAgentId),
+        },
       );
       writeSessionCache(sessionId, {
         status: "ready",
@@ -1129,6 +1240,7 @@ async function handleSessionStart(hookInput) {
 
   const context = buildSessionStartContext(convId, sessionId, agentId, memories, {
     datapackPin,
+    captureError: readCaptureError(agentId),
   });
   if (sessionId) {
     writeSessionCache(sessionId, {
@@ -1210,6 +1322,20 @@ async function main() {
   try {
     await mcpInitialize();
   } catch (err) {
+    const persistent = classifyPersistentCaptureFailure(err);
+    if (persistent) {
+      const pendingExchanges = extractExchanges(transcriptPath, lastLine).length;
+      writeCaptureError(agentId, {
+        code: persistent.code,
+        reason: persistent.reason,
+        held_exchanges: pendingExchanges || 1,
+        session_id: sessionId,
+        conversation_id: convId || null,
+      });
+      process.stderr.write(
+        `[meko-capture] Persistent capture rejection recorded for the next SessionStart: ${persistent.reason}.\n`,
+      );
+    }
     process.stderr.write(`[meko-capture] Failed to initialize MCP session: ${err.message}\n`);
     process.stdout.write(hookOutput(""));
     return;
@@ -1230,6 +1356,7 @@ async function main() {
   const exchanges = extractExchanges(transcriptPath, lastLine);
   let captured = 0;
   let failed = 0;
+  const persistentFailures = [];
 
   for (const exchange of exchanges) {
     try {
@@ -1242,8 +1369,30 @@ async function main() {
       captured++;
     } catch (err) {
       failed++;
+      const persistent = classifyPersistentCaptureFailure(err);
+      if (persistent) persistentFailures.push(persistent);
       process.stderr.write(`[meko-capture] Failed to add message (uuid=${exchange.user_uuid}): ${err.message}\n`);
     }
+  }
+
+  if (persistentFailures.length > 0) {
+    const persistent = persistentFailures[0];
+    writeCaptureError(agentId, {
+      code: persistent.code,
+      reason: persistent.reason,
+      // Every failed exchange remains held by the watermark, including any
+      // transient failures that happened in the same persistently rejected batch.
+      held_exchanges: failed,
+      session_id: sessionId,
+      conversation_id: convId,
+    });
+    process.stderr.write(
+      `[meko-capture] Persistent capture rejection recorded for the next SessionStart: ${persistent.reason}.\n`,
+    );
+  } else if (captured > 0) {
+    // A successful write proves the prior persistent rejection has cleared.
+    // Transient failures may still hold this batch's watermark independently.
+    clearCaptureError(agentId);
   }
 
   // Advance the watermark to currentLines ONLY when every exchange was

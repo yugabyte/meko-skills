@@ -24,11 +24,11 @@ specific language governing permissions and limitations under the License.
 
 ## Tool-Specific Guidance
 - [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message
+- [tools-conversation-reasoning.md](tools-conversation-reasoning.md) — Authoring the `reasoning` and `plan` fields on `conversation_add_message`, with worked examples
 - [tools-datapack-workflow.md](tools-datapack-workflow.md) — Datapack lifecycle, datapack_id routing, and multi-database patterns
 - [tools-rag-workflow.md](tools-rag-workflow.md) — End-to-end RAG pipeline: source registration, index creation, status polling
 
 ## Safety & Permissions
-- [tools-scope-permissions.md](tools-scope-permissions.md) — read/write/admin permission hierarchy and per-tool requirements
 
 ## Conventions & Deduplication
 - [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — agent_id naming rules, hyphen prohibition, and namespace isolation

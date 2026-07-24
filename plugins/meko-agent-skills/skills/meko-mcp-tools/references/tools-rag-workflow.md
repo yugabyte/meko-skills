@@ -30,7 +30,6 @@ creation and ingestion happen out of band — through the **Meko UI**
 
 ```
 knowledgebase_search(
-    scope="read",
     query="natural-language question",
     agent_id="<your agent_id>",
     conversation_id="<uuid from conversation_create>",
@@ -38,7 +37,7 @@ knowledgebase_search(
     limit=10)
 ```
 
-Required: `scope`, `query`, `agent_id`, `conversation_id`, `datapack_id`.
+Required: `query`, `agent_id`, `conversation_id`, `datapack_id`.
 Unlike the memory tools, `datapack_id` has no default here — you must
 pass it explicitly. `agent_id` is **ignored for filtering** on this
 tool (KB results are team-shared on the datapack), but you still pass

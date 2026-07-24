@@ -81,7 +81,7 @@ The user has zero datapacks under their account. The skill's response:
 ```
 You don't have any datapacks yet. Create one with:
 
-  datapack_create(scope="write", name="<your-datapack-name>")
+  datapack_create(name="<your-datapack-name>")
 
 Or visit the Meko Cloud console (Datapacks → New datapack).
 ```

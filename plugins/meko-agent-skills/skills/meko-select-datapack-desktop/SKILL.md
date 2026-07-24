@@ -3,15 +3,15 @@ name: meko-select-datapack-desktop
 description: >-
   Lists the user's Meko datapacks, shows authorization, supports search and
   pagination, and pins one as the active datapack on Claude Desktop. Triggers
-  when the user says things like "switch datapack", "use datapack <name>",
-  "list my datapacks", "which datapack am I on", "pin <name>", or any request
+  when the user says things like "switch datapack", "use the Acme datapack",
+  "list my datapacks", "which datapack am I on", "pin Acme", or any request
   to change or inspect the active datapack. Persistence is via memory_add
   (Desktop has no SessionStart hook), so the pin survives across sessions
   until the user clears it.
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.1.0"
+  version: "1.2.0"
   tags: meko, datapack, selection, project, claude-desktop, desktop
 ---
 <!--
@@ -59,7 +59,7 @@ Trigger immediately on any of these signals:
 Before issuing a Meko MCP write tool call (memory_add, conversation_add_message, artifact_put, etc.), if you don't already know the active pin from this turn's earlier work:
 
 ```
-memory_search(scope="read",
+memory_search(
               query="meko_active_datapack",
               agent_id="claude_desktop",
               conversation_id="<this conversation's id>",
@@ -75,7 +75,7 @@ This is once per turn, not once per call. Cache within the turn.
 ### 1. List
 
 Use a **temporary** conversation for browsing only. Call
-`conversation_create(scope="write", agent_id="claude_desktop", title="Claude
+`conversation_create(agent_id="claude_desktop", title="Claude
 Desktop datapack selection")` and use its returned ID for the read-only
 `datapack_list` below and for the pin `memory_add`/`memory_update` in step 4.
 
@@ -86,13 +86,20 @@ must flow through a *new* conversation created in the selected datapack — see
 step 5.
 
 ```
-datapack_list(scope="read", conversation_id="<this conversation's id>")
+datapack_list(conversation_id="<this conversation's id>")
 ```
 
 The response is an array; the fields you'll use are `datapack_id`,
-`datapack_name`, `created_at`, and `account_id`.
+`datapack_name`, `created_at`, `account_id`, and `grant`.
 
-If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(scope='write', name='<name>')` to make one, or visit the Meko Cloud console."* Stop here.
+`grant` is the caller's actual authorization on the datapack — one of
+`"owner"`, `"maintainer"`, `"contributor"`, `"viewer"`. Display it verbatim in
+the Role column. Do not hardcode "Owner", do not invent or normalize the value
+(render `"maintainer"` as `maintainer`, not `Maintainer`). The deployed
+response is the source of truth — see `references/role-display-future.md` for
+the taxonomy.
+
+If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>')` to make one, or visit the Meko Cloud console."* Stop here.
 
 If the response has exactly **one** entry, **auto-select it**. Print: *"Only one datapack: `<name>`. Auto-selecting. Run `meko-select-datapack-desktop` again with `clear` to unset."* Skip the table; jump to step 4 (persist) and step 5 (confirm).
 
@@ -103,18 +110,21 @@ For 2+ datapacks, render a numbered table. **Page size 10.** Default sort: `crea
 ```
 Your datapacks (showing 1-10 of 14):
 
-#   Name                                   Role    Created       Status     Active?
-1   meko-local-setup                       Owner   2026-04-30    ready       ←  (pinned)
-2   meko_default_datapack                  Owner   2026-04-30    ready
-3   prod-research                          Owner   2026-04-12    ready
+#   Name                                   Role          Created       Status     Active?
+1   meko-local-setup                       owner         2026-04-30    ready       ←  (pinned)
+2   meko_default_datapack                  owner         2026-04-30    ready
+3   team-onboarding                        maintainer    2026-04-08    ready
+4   q2-roadmap                             viewer         2026-03-22    ready
 …
 
 Reply with: a number (1-10) to pin · a substring to search · `next` / `prev` to page
             · `clear` to unset · `cancel` to leave the current pin alone
-
-Note: Role is hardcoded to "Owner" today. Shared / Viewer / Contributor /
-Maintainer roles are pending upstream backend work — see references/role-display-future.md.
 ```
+
+The **Role** column shows each datapack's `grant` value verbatim (`owner`,
+`maintainer`, `contributor`, `viewer`). Never hardcode "Owner" — shared
+datapacks legitimately carry other grants, and misreporting them (e.g. showing
+a `maintainer` grant as "Owner") misleads the user about their own access.
 
 Mark the currently-pinned row with `←  (pinned)` based on the `memory_search` result (if any).
 
@@ -132,7 +142,7 @@ Mark the currently-pinned row with `←  (pinned)` based on the `memory_search` 
 **On first pin (no existing pin memory):**
 
 ```
-memory_add(scope="write",
+memory_add(
            text="meko_active_datapack=<uuid> name=<name> selected_at=<iso8601>",
            agent_id="claude_desktop",
            conversation_id="<this conversation's id>",
@@ -144,7 +154,7 @@ Verify the write with `memory_search` (the standard Meko verify-after-write rule
 **On switch (existing pin memory found):**
 
 ```
-memory_update(scope="write",
+memory_update(
               memory_id="<existing pin id>",
               text="meko_active_datapack=<new uuid> name=<new name> selected_at=<iso8601>",
               agent_id="claude_desktop",
@@ -156,7 +166,7 @@ Always update — never `memory_add` a second pin. Two pin memories will produce
 **On clear:**
 
 ```
-memory_delete_by_id(scope="write",
+memory_delete_by_id(
                     memory_id="<existing pin id>",
                     agent_id="claude_desktop",
                     conversation_id="<this conversation's id>")
@@ -167,7 +177,7 @@ If `memory_search` returned no pin, there's nothing to delete — print *"No pin
 **Conversation transition after a clear (same rule as a switch).** The pin memory is now gone, but the session's current conversation still physically lives in the datapack that was pinned when it was created — a conversation cannot move to the default. You must pick exactly one of these; do not mix them:
 
 - **Option A — keep capturing to the current conversation this session.** It stays in its original (now-unpinned) datapack, so you must keep passing that **same old `datapack_id`** on its `conversation_add_message` calls — do NOT switch it to the default (that would fail). The clear only affects *new* sessions. Disclose: *"Pin cleared. This chat keeps saving to `<old datapack name>`; new chats will use the default datapack."*
-- **Option B — start default-datapack capture immediately.** Create a **new** conversation with no `datapack_id` (`conversation_create(scope="write", agent_id="claude_desktop")`) and post all subsequent turns there. Stop posting to the old conversation. Disclose: *"Pin cleared. Started a new chat context saving to the default datapack."*
+- **Option B — start default-datapack capture immediately.** Create a **new** conversation with no `datapack_id` (`conversation_create(agent_id="claude_desktop")`) and post all subsequent turns there. Stop posting to the old conversation. Disclose: *"Pin cleared. Started a new chat context saving to the default datapack."*
 
 Default to Option A (least disruptive) unless the user wants the switch to take effect right now. Either way, never send `datapack_id=default` to the pre-existing pinned conversation.
 
@@ -187,7 +197,7 @@ right `datapack_id` flows through automatically.
 **Then start a fresh conversation for capture in the selected datapack.** The
 temporary selection conversation from step 1 belongs to the datapack that was
 active when it was created and cannot be moved. For subsequent capture this
-session, call `conversation_create(scope="write", agent_id="claude_desktop",
+session, call `conversation_create(agent_id="claude_desktop",
 datapack_id="<the newly pinned uuid>", title="<topic>")` and post turns
 (`conversation_add_message`) to *that* conversation with the same
 `datapack_id`. Do not keep posting to the selection conversation — doing so

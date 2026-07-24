@@ -50,7 +50,7 @@ It works **poorly** for:
 
 1. **Write a single narrative summary** as a memory — one call, not row-by-row:
    ```
-   memory_add(scope="write",
+   memory_add(
        agent_id="<your session agent_id>",
        conversation_id="<session conversation_id>",
        text="Customer Complaints dataset has fields: Complaint ID (int PK), Date Submitted (date), Product (text, e.g. Mortgage/Credit Card), Sub-product (text), Issue (text), Company Response (text), State (text, 2-letter code), ZIP Code (text)")

@@ -25,12 +25,12 @@ Concrete transcripts of the four flows the skill supports on Claude Desktop.
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [empty]
 
-> datapack_list(scope="read")
+> datapack_list()
 [14 entries returned, filtering by "prod-research"]
 
 One match: `prod-research`. Pinning.
 
-> memory_add(scope="write",
+> memory_add(
              text="meko_active_datapack=8b1c…f4a2 name=prod-research selected_at=2026-05-25T18:42:00Z",
              agent_id="claude_desktop",
              conversation_id="<conv-id>",
@@ -58,12 +58,12 @@ datapack_id flows through automatically.
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [returns id=mem_abc123, text="meko_active_datapack=8b1c…f4a2 name=prod-research …"]
 
-> datapack_list(scope="read")
+> datapack_list()
 [14 entries returned, filtering by "q2-roadmap-deck"]
 
 One match: `q2-roadmap-deck`. Switching pin.
 
-> memory_update(scope="write",
+> memory_update(
                 memory_id="mem_abc123",
                 text="meko_active_datapack=4c2e…a991 name=q2-roadmap-deck selected_at=2026-05-25T19:05:00Z",
                 agent_id="claude_desktop",
@@ -83,12 +83,12 @@ The `memory_update` is critical here — using `memory_add` again would create a
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [empty]
 
-> datapack_list(scope="read")
+> datapack_list()
 [1 entry returned]
 
 Only one datapack: `meko-local-setup`. Auto-selecting.
 
-> memory_add(scope="write",
+> memory_add(
              text="meko_active_datapack=a17d…cc91 name=meko-local-setup selected_at=…",
              agent_id="claude_desktop",
              conversation_id="<conv-id>",
@@ -107,7 +107,7 @@ Pinned datapack `meko-local-setup` (`a17d…cc91`). Run this skill again with
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [returns id=mem_abc123]
 
-> memory_delete_by_id(scope="write",
+> memory_delete_by_id(
                       memory_id="mem_abc123",
                       agent_id="claude_desktop",
                       conversation_id="<conv-id>")
@@ -128,7 +128,7 @@ This isn't a user-triggered flow — it's the per-turn lookup the skill teaches 
 
 # Extract UUID after "meko_active_datapack=" → 8b1c…f4a2
 
-> memory_add(scope="write", text="…", datapack_id="8b1c…f4a2",
+> memory_add(text="…", datapack_id="8b1c…f4a2",
              agent_id="claude_desktop", conversation_id="<conv-id>")
 ```
 

@@ -54,7 +54,6 @@ Then the test agent ran `/clear` and was asked to save and read back a memory. T
 
 ```
 mcp__meko__memory_add(
-  scope="write",
   agent_id="claude_code:meko-mcp-server",
   conversation_id="f300c7929648401ca6343691805e345e",
   text="datapack pin test — verifying the SessionStart hook injects the active datapack."
@@ -96,7 +95,7 @@ Test session, fresh after `/reload-plugins`:
 ```
 > /meko-agent-skills:meko-select-datapack
 
-mcp__meko__datapack_list(scope="read", conversation_id="218fee84d0674046a705e575bd040733")
+mcp__meko__datapack_list(conversation_id="218fee84d0674046a705e575bd040733")
 → 6 datapacks returned, including one with grant=maintainer (Andrew Marshall's
   "YugabyteDB 2026.1 Launch Messaging and Assets") — first real-world non-owner grant.
 
@@ -156,6 +155,6 @@ The agent's `memory_add` call **automatically included** `datapack_id="feb706ad-
 
 ## Notes on test agent behavior worth remembering
 
-In round 1, the agent twice asserted the API returned `memory_count` / `knowledge_count` / `learnings_count` fields when a `grep` of the upstream Go source said no such fields existed. Round 2 confirmed those fields ARE on the deployed wire response (the upstream `models.Datapack` Go struct is incomplete relative to what the deployed server returns). When the test agent's claim contradicts a local-clone grep, ask for the verbatim JSON before disputing. See `project_meko_deployed_extends_public_struct.md` in the user's Claude memory.
+In round 1, the agent twice asserted the API returned `memory_count` / `knowledge_count` / `learnings_count` fields when a `grep` of the upstream Go source said no such fields existed. Round 2 confirmed those fields ARE on the deployed wire response (the upstream `models.Datapack` Go struct is incomplete relative to what the deployed server returns). When the test agent's claim contradicts a local-clone grep, ask for the verbatim JSON before disputing. See `project_meko_deployed_extends_public_struct.md` in the user's Claude memory. **Post-fix note**: the list endpoint on Meko does not populate any of the count fields — the list handler doesn't run the per-datapack count queries. All four (`memory_count`, `knowledge_count`, `learnings_count`, `collective_memory_count`) come through as zero on every row; the MCP client strips all four so callers aren't misled. Use `datapack_describe` for real counts.
 
 Round 1 agent also misread the test result as success when `metadata.meko_datapack_id` was the *default* datapack, not the pinned one. That's a useful failure mode for skill iteration: the user-facing success message was *"Saved and verified"* but the verification compared to the wrong baseline. SKILL.md after v2 mandates that the agent pass `datapack_id` and that confirmation messages reference the specific UUID — this makes the "wrong datapack got the write" case visible at a glance.

@@ -21,6 +21,16 @@ if [ -n "$TRANSCRIPT_PATH" ]; then
     kill "$(cat "$PID_FILE")" 2>/dev/null || true
     rm -f "$PID_FILE"
   fi
+  # Fallback: the pid file can go missing while the daemon lives (removed out of
+  # band, a missed/blocked signal). Match the running checkpoint-timer.js by the
+  # clean session id rather than the absolute transcript path, which may contain
+  # regex metacharacters that make pgrep fail or match incorrectly.
+  if command -v pgrep >/dev/null 2>&1; then
+    for pid in $(pgrep -f "checkpoint-timer.js .*${SESSION_ID}" 2>/dev/null); do
+      [ "$pid" = "$$" ] && continue
+      kill "$pid" 2>/dev/null || true
+    done
+  fi
 fi
 
 # Run final capture

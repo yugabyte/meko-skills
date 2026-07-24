@@ -34,13 +34,17 @@ Use the field directly in the **Role** column:
 
 Do not invent values, do not normalize the casing, do not display `"Owner"` if the field says `"owner"`. The deployed schema is the source of truth.
 
-Note that the upstream Go source (`/Users/amiram.mizne/sandbox/GitHub/meko/api_server/internal/models/models.go`) does NOT declare `grant` on the `Datapack` struct — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
+Note that the upstream Go source (the `Datapack` struct in `api_server/internal/models/models.go` of the `meko` API-server repo) does NOT declare `grant` — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
-## Counts on the list response
+## Other fields the live response includes
 
-`datapack_list` does not carry usable count fields. The list handler on the Meko server doesn't run the per-datapack queries that populate `memory_count`, `knowledge_count`, `learnings_count`, or `collective_memory_count` — all four are zero on every row (`models.Datapack` declares them without `omitempty`, so the zeros survive JSON marshalling). The MCP client strips all four before returning so callers aren't misled.
+Beyond the columns the skill renders by default, `datapack_list` returns counts that may be useful in some flows:
 
-If the user asks for counts, call `datapack_describe(datapack_id=...)` on the specific rows they care about — that's the path that runs the count queries. Don't invent numbers or claim zero from the list response.
+- `memory_count` — total memories the caller has under this datapack (per `(user_id, agent_id)` scoping).
+- `knowledge_count` — knowledge-base entries on the datapack.
+- `learnings_count` — promoted-to-shared memories on the datapack.
+
+These aren't in the spec column set. Don't add them silently. If the user asks for counts, render them on request — and read the numbers from the live response, never invent them.
 
 ## Sharing UI vs API state
 
@@ -48,4 +52,4 @@ The Cloud console "Share <datapack>" page (`meko_ui/src/features/datapacks/pages
 
 ## Why the skill ships without Mine / Shared / All filter tabs
 
-The pin sidecar + hook injection delivers the user's actual ask ("don't make me remember a UUID"). Filter tabs are useful when the response is genuinely mixed-grant; for users with only owner-grant rows they're decorative. We add tabs when there's evidence users with mixed-grant responses want them.
+The tagged pin memory (re-read via `memory_search` before each Meko write) delivers the user's actual ask ("don't make me remember a UUID"). Filter tabs are useful when the response is genuinely mixed-grant; for users with only owner-grant rows they're decorative. We add tabs when there's evidence users with mixed-grant responses want them.

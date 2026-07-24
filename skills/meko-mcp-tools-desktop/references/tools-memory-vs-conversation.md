@@ -25,10 +25,10 @@ specific language governing permissions and limitations under the License.
 Memory is backed by pgvector (semantic search) and Apache AGE (entity-relationship graph). It retrieves relevant facts by meaning, not by conversation order.
 
 ```
-memory_add(scope="write", agent_id="support_bot",
+memory_add(agent_id="support_bot",
     text="Customer Alice (alice@acme.com) prefers email, has Pro plan.", user_id="alice_123")
 
-memory_search(scope="read", query="What plan does Alice have?", agent_id="support_bot")
+memory_search(query="What plan does Alice have?", agent_id="support_bot")
 ```
 
 ## Use `conversation_create` + `conversation_add_message` when storing:
@@ -40,10 +40,10 @@ memory_search(scope="read", query="What plan does Alice have?", agent_id="suppor
 Conversations are backed by Langfuse sessions and traces. They preserve full structure: who said what, in what order, with what reasoning.
 
 ```
-conversation_create(scope="write", agent_id="support_bot", user_id="alice_123", title="Pricing discussion")
+conversation_create(agent_id="support_bot", user_id="alice_123", title="Pricing discussion")
 -- Returns: {"id": "conv-uuid-here"}
 
-conversation_add_message(scope="write", conversation_id="conv-uuid-here", agent_id="support_bot",
+conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot",
     input="What are your pricing tiers?",
     output="We offer Starter ($10/mo), Pro ($50/mo), and Enterprise (custom).",
     reasoning="Retrieved pricing page data. No special discounts apply.")
@@ -95,12 +95,12 @@ For a true fan-out across other clients' buckets (e.g. also see what was written
 
 - **Personal memories** — written by `memory_add`. Scoped per-user and per-agent from the moment of write. Only the writer sees them via MCP reads.
 - **Team-shared Shared Knowledge** — arrives two ways:
-  1. The **user** (never the agent) promotes a personal memory to Knowledge via the Cloud UI's Learnings tab. That copies the row into the shared `knowledge_base` table with the `user_id` stripped, making it team-wide. Originating `agent_id` is preserved in metadata for provenance.
+  1. An agent calls `memory_promote` for exact, user-confirmed memory UUIDs, or the user promotes them from the Cloud UI's Learnings tab. Promotion moves the memories and graph context into shared knowledge, strips `user_id`, preserves originating `agent_id` as provenance, and evicts the private mem0 records.
   2. The user uploads a file via Datapack → Actions → **Add Knowledge** in the Cloud UI. PDF/TXT/MD/JSON/MP4 up to 5MB each.
 
   Both show up in `knowledgebase_search`, tagged `metadata_filters.source: "memory"` vs other values so the agent can distinguish provenance in responses.
 
-**No MCP tool promotes to Shared Knowledge.** The agent can flag memories it thinks are worth promoting and suggest the user do it from the UI — but the action is user-initiated.
+`memory_promote` is a one-way, destructive MCP path. Before calling it, retrieve exact UUIDs with `memory_search` or `memory_get_all`, show the exact candidates, explain team visibility and private-record eviction, and obtain explicit user confirmation. Only owners and maintainers may promote; report 403/auth failures without escalating scope or switching datapacks. The Cloud UI remains an alternative.
 
 ### When the user asks "what do you know about X?"
 

@@ -20,8 +20,8 @@ specific language governing permissions and limitations under the License.
 
 Before starting a session, verify that the Meko MCP tools are working:
 
-1. `memory_search(scope="read", query="test", agent_id="<your-session-agent-id>", conversation_id="<session-conversation-id>")` — Confirms memory subsystem is up. Use the `agent_id` and `conversation_id` from the SessionStart `additionalContext`. May fail with "connection already closed" — see `tools-troubleshooting.md`.
-2. `datapack_list(scope="read")` — Confirms Meko API connectivity. Returns the datapacks your token has access to.
+1. `memory_search(query="test", agent_id="<your-session-agent-id>", conversation_id="<session-conversation-id>")` — Confirms memory subsystem is up. Use the `agent_id` and `conversation_id` from the SessionStart `additionalContext`. May fail with "connection already closed" — see `tools-troubleshooting.md`.
+2. `datapack_list()` — Confirms Meko API connectivity. Returns the datapacks your token has access to.
 
 ## Decision tree: which tool do I need?
 
@@ -47,58 +47,58 @@ Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typi
 
 ## Knowledge Base Tools (1)
 
-| Tool | Scope | Purpose |
-|------|-------|---------|
-| `knowledgebase_search(scope, query, agent_id, conversation_id, datapack_id, limit=10)` | read | Semantic search across KB chunks. `datapack_id` is REQUIRED (no default). |
+| Tool | Purpose |
+|------|---------|
+| `knowledgebase_search(query, agent_id, conversation_id, datapack_id, limit=10)` | Semantic search across KB chunks. `datapack_id` is REQUIRED (no default). |
 
 ## Memory Tools (8)
 
-| Tool | Scope | Purpose |
-|------|-------|---------|
-| `memory_add(scope, text, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, metadata=None, messages=None, datapack_id=None)` | write | Store fact/preference/entity as long-term memory |
-| `memory_search(scope, query, agent_id, conversation_id="", user_id=None, limit=10, datapack_id=None)` | read | Semantic search across memories + graph relations. `conversation_id` optional (omit or pass `""` for cross-conversation discovery). |
-| `memory_get_by_id(scope, memory_id, agent_id, conversation_id, datapack_id=None)` | read | Direct pgvector row lookup by UUID. Preferred over `memory_search` for exact-id verification. |
-| `memory_get_all(scope, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, datapack_id=None)` | read | List all memories for agent |
-| `memory_update(scope, memory_id, text, agent_id, conversation_id, datapack_id=None)` | write | Overwrite memory text |
-| `memory_delete_by_id(scope, memory_id, agent_id, conversation_id, datapack_id=None)` | write | Delete a single memory |
-| `memory_delete_all(scope, agent_id, conversation_id, user_id=None, app_id=None, run_id=None, datapack_id=None)` | admin | Delete all memories for agent (destructive) |
-| `memory_promote(scope, conversation_id, memory_ids, agent_id=None, datapack_id=None)` | write | Promote private memories into the datapack's shared knowledge base (moves them + graph context out of mem0, then evicts from mem0 — one-way). Owners/maintainers only; viewers/contributors get 403. |
+| Tool | Purpose |
+|------|---------|
+| `memory_add(text, agent_id, conversation_id, run_id=None, metadata=None, messages=None, datapack_id=None)` | Store fact/preference/entity as long-term memory |
+| `memory_search(query, agent_id, conversation_id="", limit=10, datapack_id=None)` | Semantic search across memories + graph relations. `conversation_id` optional (omit or pass `""` for cross-conversation discovery). |
+| `memory_get_by_id(memory_id, agent_id, conversation_id, datapack_id=None)` | Direct pgvector row lookup by UUID. Preferred over `memory_search` for exact-id verification. |
+| `memory_get_all(agent_id, conversation_id, run_id=None, datapack_id=None)` | List all of the user's memories (every agent — `agent_id` does not filter) |
+| `memory_update(memory_id, text, agent_id, conversation_id, datapack_id=None)` | Overwrite memory text |
+| `memory_delete_by_id(memory_id, agent_id, conversation_id, datapack_id=None)` | Delete a single memory |
+| `memory_delete_all(agent_id, conversation_id, run_id=None, datapack_id=None)` | Delete all memories for agent (destructive) |
+| `memory_promote(conversation_id, memory_ids, agent_id=None, datapack_id=None)` | Promote private memories into the datapack's shared knowledge base (moves them + graph context out of mem0, then evicts from mem0 — one-way). Owners/maintainers only; viewers/contributors get 403. |
 
 ## Conversation Tools (6)
 
-| Tool | Scope | Purpose |
-|------|-------|---------|
-| `conversation_create(scope, agent_id, user_id=None, app_id=None, run_id=None, title=None, metadata=None, session_id="")` | write | Create conversation container (Langfuse session) |
-| `conversation_add_message(scope, conversation_id, agent_id, input, output=None, reasoning=None, metadata=None, seed=None, trace_id="")` | write | Add a message turn (Langfuse trace) |
-| `conversation_get(scope, conversation_id, agent_id, include_messages=False, limit=100, offset=0)` | read | Retrieve conversation, optionally with messages |
-| `conversation_list(scope, agent_id=None, limit=20, offset=0, conversation_id="", datapack_id=None)` | read | List conversations for agent within a datapack. `datapack_id` (UUID) is optional — defaults to the pinned/tenant datapack; use `datapack_list` to look it up. `conversation_id` optional (omit for browse). |
-| `conversation_update(scope, conversation_id, agent_id, title=None, metadata=None)` | write | Update title or metadata |
-| `conversation_delete(scope, conversation_id, agent_id)` | admin | Delete entire conversation (destructive) |
+| Tool | Purpose |
+|------|---------|
+| `conversation_create(agent_id, run_id=None, title=None, metadata=None, session_id="")` | Create conversation container (Langfuse session) |
+| `conversation_add_message(conversation_id, agent_id, input, output=None, reasoning=None, metadata=None, seed=None)` | Add a message turn (Langfuse trace) |
+| `conversation_get(conversation_id, agent_id, include_messages=False, limit=100, offset=0)` | Retrieve conversation, optionally with messages |
+| `conversation_list(agent_id=None, limit=20, offset=0, conversation_id="", datapack_id=None)` | List the user's conversations within a datapack (`agent_id` does not filter — trace attribution only). `datapack_id` (UUID) is optional — defaults to the pinned/tenant datapack; use `datapack_list` to look it up. `conversation_id` optional (omit for browse). |
+| `conversation_update(conversation_id, agent_id, title=None, metadata=None)` | Update title or metadata |
+| `conversation_delete(conversation_id, agent_id)` | Delete entire conversation (destructive) |
 
 ## Datapack Management Tools (5)
 
-| Tool | Scope | Purpose |
-|------|-------|---------|
-| `datapack_create(scope, name)` | write | Create new datapack |
-| `datapack_list(scope)` | read | List all datapacks |
-| `datapack_describe(scope, datapack_id, include_status=False)` | read | Describe datapack by UUID |
-| `datapack_update(scope, datapack_id, connection_string)` | write | Update connection string |
-| `datapack_delete(scope, datapack_id)` | admin | Delete datapack by UUID (irreversible) |
+| Tool | Purpose |
+|------|---------|
+| `datapack_create(name)` | Create new datapack |
+| `datapack_list()` | List all datapacks |
+| `datapack_describe(datapack_id, include_status=False)` | Describe datapack by UUID |
+| `datapack_update(datapack_id, name=None, description=None)` | Rename a datapack and/or update its description. Pass at least one of `name` / `description`. |
+| `datapack_delete(datapack_id)` | Delete datapack by UUID (irreversible) |
 
 ## Artifact Tools (2)
 
 Content-addressed blob store scoped to a datapack. Files < 1 MB go inline in the DB; files ≥ 1 MB go to S3. Identity is SHA-256 — uploading the same bytes twice returns the same `content_hash`. Free-tier artifacts expire after 30 days of inactivity; pro-tier artifacts have no TTL.
 
-| Tool | Scope | Purpose |
-|------|-------|---------|
-| `artifact_put(scope, filename, content_base64, content_type, conversation_id, datapack_id=None, agent_id=None)` | write | Upload a file to the datapack. Returns `{artifact_id, content_hash, filename, size_bytes, stored_in}`. Max 5 MiB (configurable via `MEKO_MAX_ARTIFACT_UPLOAD_BYTES`). |
-| `artifact_get(scope, content_hash, conversation_id, datapack_id=None, agent_id=None)` | read | Retrieve a file by SHA-256 hash. Small files return `content_base64` inline; large files (S3) are written to `~/.meko/artifacts/<hash>/<filename>` and `local_path` is returned. |
+| Tool | Purpose |
+|------|---------|
+| `artifact_put(filename, content_base64, content_type, conversation_id, datapack_id=None, agent_id=None)` | Upload a file to the datapack. Returns `{artifact_id, content_hash, filename, size_bytes, stored_in}`. Max 5 MiB (configurable via `MEKO_MAX_ARTIFACT_UPLOAD_BYTES`). |
+| `artifact_get(content_hash, conversation_id, datapack_id=None, agent_id=None)` | Retrieve a file by SHA-256 hash. Small files return `content_base64` inline; large files (S3) are written to `~/.meko/artifacts/<hash>/<filename>` and `local_path` is returned. |
 
 ## Observability Tools (1)
 
-| Tool | Scope | Purpose |
-|------|-------|---------|
-| `track_token_usage(scope, conversation_id, name, input_tokens=0, output_tokens=0, total_tokens=None, model=None, message_id=None, datapack_id=None)` | write | Record an LLM-cost GENERATION observation on the conversation's trace. Primarily called by first-party Meko services (e.g. inference_gateway) that know their LLM's exact token counts. Most end-agents (Cursor, Claude Desktop) don't have those counts at the MCP call layer, so this tool is rarely useful for third-party agents. |
+| Tool | Purpose |
+|------|---------|
+| `track_token_usage(conversation_id, name, input_tokens=0, output_tokens=0, total_tokens=None, model=None, message_id=None, datapack_id=None)` | Record an LLM-cost GENERATION observation on the conversation's trace. Primarily called by first-party Meko services (e.g. inference_gateway) that know their LLM's exact token counts. Most end-agents (Cursor, Claude Desktop) don't have those counts at the MCP call layer, so this tool is rarely useful for third-party agents. |
 
 ## Platform capabilities NOT exposed via MCP
 
@@ -117,4 +117,4 @@ For knowledge-base content on Cloud, the canonical path is **UI upload**: Datapa
 
 ## Common Parameter Patterns
 
-Every tool accepts `scope` as the first parameter. Memory and KB tools accept optional `datapack_id` to target a specific datapack. Memory and conversation tools require `agent_id` for namespace isolation (see `tools-agent-id-conventions.md`).
+Memory and KB tools accept optional `datapack_id` to target a specific datapack. `agent_id` attributes writes and is enforced only on `conversation_get` (agent-owned — a wrong value returns `agent_id_mismatch`); it does **not** filter memory reads (`memory_search`/`memory_get_all`) or `conversation_list`, which return all your agents' rows for the user. See `tools-agent-id-conventions.md`.

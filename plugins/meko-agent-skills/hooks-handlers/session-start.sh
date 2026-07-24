@@ -16,7 +16,14 @@ TRANSCRIPT_PATH="$(printf '%s' "$HOOK_INPUT" | node -e '
 # Spawn background checkpoint timer (periodic capture without interrupting the agent).
 # Send the daemon's stderr to a log file instead of /dev/null so startup
 # failures and crashes are diagnosable; stdout is still discarded.
-if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+#
+# NOTE: we deliberately do NOT gate on [ -f "$TRANSCRIPT_PATH" ]. SessionStart
+# fires before Claude Code writes the transcript .jsonl, so that file usually
+# does not exist yet at hook time (measured gaps of +3s to +20min). Gating on
+# its existence meant the timer never spawned and the whole session went
+# uncaptured. checkpoint-timer.js self-guards a missing transcript on each
+# tick(), so spawning unconditionally (when the path is known) is safe.
+if [ -n "$TRANSCRIPT_PATH" ]; then
   MEKO_LOG_DIR="${MEKO_WATERMARK_DIR:-$HOME/.claude/meko-capture}"
   mkdir -p "$MEKO_LOG_DIR"
   nohup node "$SCRIPT_DIR/lib/checkpoint-timer.js" "$TRANSCRIPT_PATH" \
