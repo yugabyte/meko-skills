@@ -68,7 +68,12 @@ const INVISIBLE_RE =
 
 const URL_RE = /\bhttps?:\/\/([^\s/"'`)\]>]+)/gi;
 const RAW_IP_RE = /\bhttps?:\/\/\d{1,3}(?:\.\d{1,3}){3}/i;
-const DANGEROUS_SCHEME_RE = /\b(javascript|data|vbscript):/i;
+// Require a URI-shaped payload after the scheme so prose like "good data:"
+// or CSP fragments like "img-src data:" do not false-positive. Real vectors
+// look like `javascript:…`, `data:text/html,…`, `data:image/png;base64,…`,
+// or the empty-MIME form `data:,…`.
+const DANGEROUS_SCHEME_RE =
+  /\b(?:javascript|vbscript):|\bdata:(?:[a-z0-9.+-]+\/|[a-z0-9.+-]+;|;|,)/i;
 
 function scanFile(path) {
   const findings = [];
@@ -103,8 +108,14 @@ function scanFile(path) {
       // included because browsers normalize it to `/`.)
       const authority = m[1].split(/[/?#\\]/, 1)[0];
       const host = authority.split("@").pop().split(":")[0].toLowerCase();
+      // Template placeholders like https://<your-instance>.mcp.mekodev.com are
+      // documentation, not live endpoints — the angle bracket marks them.
       const isPlaceholder = host.includes("<") || host.includes(">");
-      if (!isPlaceholder && !ALLOWED_HOSTS.has(host)) {
+      // Per-tenant Meko instances live under *.mcp.mekodev.com; the host is
+      // user-supplied, so allow the documented suffix rather than each subdomain.
+      // `(?:^|\.)` matches both the bare domain and any subdomain.
+      const isMekoInstance = /(?:^|\.)mcp\.mekodev\.com$/.test(host);
+      if (!isPlaceholder && !isMekoInstance && !ALLOWED_HOSTS.has(host)) {
         findings.push({ path, ln, rule: "non-allowlisted-url", snippet: `${host}` });
       }
     }

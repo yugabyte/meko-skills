@@ -30,6 +30,8 @@ Memories segregate strictly by `agent_id`. Pick the right bucket up front:
 
 **For Claude Desktop, the practical default is `claude_desktop` for personal context and `meko_agent` for genuinely cross-client facts.** When the user's information is project-agnostic ("the user is named Amiram", "the user prefers vim"), prefer `meko_agent` so other clients (Claude Code, Cursor) can see it too.
 
+**Don't write with another client's shape.** A Claude Desktop session that writes with `agent_id="claude_code"` (or `claude_code:something`) creates rows other agents will attribute to Claude Code and skew retrieval scoping for both. Use `claude_desktop` when Desktop is what's running.
+
 ## Valid characters
 
 The server stores `agent_id` as a row-level column value — it never becomes a PostgreSQL identifier on Cloud. Any printable string works: colons, hyphens, dots, underscores, spaces. Stay within what's readable in the UI badge.
@@ -71,7 +73,8 @@ memory_add(agent_id=X, text=...)
    ▼
 mem0_collection  ── personal memories, scoped (datapack, user, agent)
    │
-   │   UI "Promote to Knowledge" (Learnings tab)
+   │   memory_promote (exact UUIDs + explicit confirmation)
+   │   or UI "Promote to Knowledge" (Learnings tab)
    │   ─────────────────────────────────────────
    │   Strips user_id, keeps agent_id as metadata,
    │   copies into team-shared table
@@ -84,7 +87,7 @@ knowledgebase_search(agent_id=anything, query=...)
 
 - **Personal memories** are what you get from `memory_search` / `memory_get_all`. Private to you.
 - **Shared Knowledge** is what you get from `knowledgebase_search`. Visible to every user and every agent on the datapack.
-- **Promotion is UI-only.** There is no MCP tool for promoting a memory to Shared Knowledge — the user triggers it from the datapack's Learnings tab in the Cloud UI.
+- **Promotion has MCP and UI paths.** `memory_promote` moves exact, user-confirmed memories into Shared Knowledge and evicts the private records; the Learnings tab is the user-driven alternative. Only datapack owners and maintainers may use the MCP path.
 
 ## When to use what — broad-query guidance
 

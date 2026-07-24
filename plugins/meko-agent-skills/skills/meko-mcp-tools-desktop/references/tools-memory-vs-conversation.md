@@ -25,10 +25,10 @@ specific language governing permissions and limitations under the License.
 Memory is backed by pgvector (semantic search) and Apache AGE (entity-relationship graph). It retrieves relevant facts by meaning, not by conversation order.
 
 ```
-memory_add(scope="write", agent_id="support_bot",
+memory_add(agent_id="support_bot",
     text="Customer Alice (alice@acme.com) prefers email, has Pro plan.", user_id="alice_123")
 
-memory_search(scope="read", query="What plan does Alice have?", agent_id="support_bot")
+memory_search(query="What plan does Alice have?", agent_id="support_bot")
 ```
 
 ## Use `conversation_create` + `conversation_add_message` when storing:
@@ -40,10 +40,10 @@ memory_search(scope="read", query="What plan does Alice have?", agent_id="suppor
 Conversations are backed by Langfuse sessions and traces. They preserve full structure: who said what, in what order, with what reasoning.
 
 ```
-conversation_create(scope="write", agent_id="support_bot", user_id="alice_123", title="Pricing discussion")
+conversation_create(agent_id="support_bot", user_id="alice_123", title="Pricing discussion")
 -- Returns: {"id": "conv-uuid-here"}
 
-conversation_add_message(scope="write", conversation_id="conv-uuid-here", agent_id="support_bot",
+conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot",
     input="What are your pricing tiers?",
     output="We offer Starter ($10/mo), Pro ($50/mo), and Enterprise (custom).",
     reasoning="Retrieved pricing page data. No special discounts apply.")
@@ -95,12 +95,12 @@ For a true fan-out across other clients' buckets (e.g. also see what was written
 
 - **Personal memories** — written by `memory_add`. Scoped per-user and per-agent from the moment of write. Only the writer sees them via MCP reads.
 - **Team-shared Shared Knowledge** — arrives two ways:
-  1. The **user** (never the agent) promotes a personal memory to Knowledge via the Cloud UI's Learnings tab. That copies the row into the shared `knowledge_base` table with the `user_id` stripped, making it team-wide. Originating `agent_id` is preserved in metadata for provenance.
+  1. An agent calls `memory_promote` for exact, user-confirmed memory UUIDs, or the user promotes them from the Cloud UI's Learnings tab. Promotion moves the memories and graph context into shared knowledge, strips `user_id`, preserves originating `agent_id` as provenance, and evicts the private mem0 records.
   2. The user uploads a file via Datapack → Actions → **Add Knowledge** in the Cloud UI. PDF/TXT/MD/JSON/MP4 up to 5MB each.
 
   Both show up in `knowledgebase_search`, tagged `metadata_filters.source: "memory"` vs other values so the agent can distinguish provenance in responses.
 
-**No MCP tool promotes to Shared Knowledge.** The agent can flag memories it thinks are worth promoting and suggest the user do it from the UI — but the action is user-initiated.
+`memory_promote` is a one-way, destructive MCP path. Before calling it, retrieve exact UUIDs with `memory_search` or `memory_get_all`, show the exact candidates, explain team visibility and private-record eviction, and obtain explicit user confirmation. Only owners and maintainers may promote; report 403/auth failures without escalating scope or switching datapacks. The Cloud UI remains an alternative.
 
 ### When the user asks "what do you know about X?"
 
@@ -131,35 +131,32 @@ There is no MCP-side "just put it in a database table" option — raw SQL access
 2. **Suggest the user upload the file** via the Cloud UI's Add Knowledge flow if it's a document (CSV files aren't in the supported list — PDF/TXT/MD/JSON/MP4 are; for CSV, convert to MD or JSON first).
 3. **Never ingest CSV row-by-row** into memory — each row becomes a fragmented fact with lost context.
 
-## Proactive Memory Storage
+## Memory Storage: capture the turn, don't proactively memory_add
 
-Don't wait for the user to say "remember this." Store context proactively when you detect:
+Do **not** proactively `memory_add` facts the user states. On Claude Desktop, post each substantive turn with `conversation_add_message` and the server extracts durable memories from it automatically — personal info, team conventions, domain knowledge, and corrections the user states are all captured that way. A separate `memory_add` just duplicates what extraction produces.
 
-- **Personal info** → `memory_add`: "User is VP of Product, prefers concise responses"
-- **Team conventions** → `memory_add`: "Team uses Python for backend, Go for infrastructure"
-- **Domain knowledge** → `memory_add`: "Meko traces are decision traces that capture how and why decisions were made"
-- **Corrections** → `memory_add`: "User corrected: always use 'resilience' instead of 'high availability'"
+Explicit `memory_add` is reserved for the three cases per-turn capture can't reach:
+
+- **Explicit request** → the user says "remember this" / "save this."
+- **Output-only / tool-derived fact** → a durable fact only in your output or a tool result, never in a user turn (extraction reads the user side of the turn).
+- **Overwriting correction** → a prior fact was negated and the stale memory must not survive. Extraction is additive, so `memory_search` for the old memory and `memory_update` / `memory_delete_by_id`.
 
 Use `memory_search` at the start of sessions to recall what you already know before asking the user to repeat themselves.
 
 ## Using Both Together
 
-A common pattern: store the full conversation (preserves structure) AND extract key facts with `memory_add` (enables semantic search later).
+Posting the turn does both jobs: it preserves the full conversation (structure) and feeds the extractor (searchable memory). Add an explicit `memory_add` only for the three cases above.
 
 ## Key Retrieval Difference
 
 - `memory_search`: **semantic similarity** across all memories via pgvector. Returns relevant facts regardless of when stored.
 - `conversation_get`: **ordered list of message turns** for a specific conversation. No semantic search. Requires `conversation_id`.
 
-## Automatic Conversation Capture
+## Conversation Capture (Desktop: agent-driven)
 
-The Meko plugin captures conversations automatically via three mechanisms:
+Claude Desktop has **no capture hooks** — you are the capture mechanism. Post each substantive turn with `conversation_add_message`, and the server extracts memories from the posted turns automatically (extraction runs inside `conversation_add_message`). Coding clients like Claude Code get the same effect from SessionStart / PreCompact / SessionEnd hooks; on Desktop it's your responsibility per turn.
 
-1. **Periodic checkpoint (~10 min)** — Coding-agent hooks run a background checkpoint timer that calls `conversation_add_message` without interrupting the active turn
-2. **PreCompact hook** — Shell script that fires before Claude Code's auto-compaction, captures via MCP JSON-RPC
-3. **SessionEnd hook** — Shell script that fires at session termination, captures final exchanges
-
-### What gets captured
+### What to capture
 
 The full transcript including:
 - **User prompts** — verbatim text (the `input` field)

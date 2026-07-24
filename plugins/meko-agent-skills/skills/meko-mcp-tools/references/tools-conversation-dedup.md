@@ -18,13 +18,13 @@ specific language governing permissions and limitations under the License.
 
 When MCP clients have built-in Langfuse hooks (Cursor, Claude Code), both the client hook and the MCP server may write a trace for the same message → duplicate traces, doubled message counts, corrupted conversation retrieval.
 
-**WRONG:** Neither `seed` nor `trace_id` provided → both sides generate random IDs → two traces per message.
+**WRONG:** No `seed` provided → both sides generate random trace IDs → two traces per message.
 
 ## Solution: Use seed for deterministic trace IDs
 
 ```
 conversation_add_message(
-    scope="write", conversation_id="conv-uuid", agent_id="my_agent",
+    conversation_id="conv-uuid", agent_id="my_agent",
     input="What is our Q3 revenue?",
     output="Q3 revenue was $4.2M, up 15% from Q2.",
     seed="conv-uuid:my_agent:What is our Q3 revenue?"
@@ -33,11 +33,10 @@ conversation_add_message(
 
 Both sides hash the same seed string to produce the same trace ID. Langfuse treats the second write as an upsert → exactly one trace.
 
-## Priority Rules
+## Trace ID Rules
 
-1. **`trace_id`** — if provided, used directly (highest precedence)
-2. **`seed`** — if provided, hashed to produce deterministic trace ID
-3. **Neither** — random trace ID generated
+1. **`seed`** — if provided, hashed to produce a deterministic trace ID
+2. **Not provided** — a random trace ID is generated
 
 ## Choosing a Good Seed
 
@@ -55,7 +54,6 @@ seed = f"{conversation_id}:{agent_id}:{message_index}"
 |----------|-----|
 | Client hook + MCP server both write to Langfuse | `seed` |
 | Only the MCP server writes (no client hook) | Neither (random is fine) |
-| Migrating from another system with existing IDs | `trace_id` |
 | Replaying messages idempotently | `seed` |
 
 ## session_id on conversation_create

@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # user_id — identity scoping on Cloud Meko
 
-On Cloud Meko, every write and every personal read carries a `user_id` that identifies **who** (the cognito account) is calling. The filter tuple for personal memories and conversations is `(datapack_id, user_id, agent_id)` — you only ever see memories your own user_id wrote (or content other team members have explicitly promoted to Shared Knowledge, which is separate — see `tools-agent-id-conventions.md`).
+On Cloud Meko, every write and every personal read carries a `user_id` that identifies **who** (the cognito account) is calling. The read filter for personal **memories** is `(datapack_id, user_id)` — you see all your own memories for this user regardless of which agent wrote them (`agent_id` labels the writer but does not filter memory reads). Personal **conversation fetches** (`conversation_get`) additionally enforce `agent_id` — conversations are owned by the agent that created them; `conversation_list` does not filter by it. Either way you only ever see content your own user_id wrote (or content other team members have explicitly promoted to Shared Knowledge, which is separate — see `tools-agent-id-conventions.md`).
 
 ## The default behavior: automatic user_id from cognito
 
@@ -23,7 +23,7 @@ On Cloud, the server resolves your `user_id` automatically from the cognito acco
 This is the common case for Claude Code / Claude Desktop / Cursor:
 
 ```
-memory_add(scope="write",
+memory_add(
            text="User prefers concise responses, no emojis.",
            agent_id="claude_code:meko-mcp-server",
            conversation_id="<session conversation_id>")
@@ -38,21 +38,21 @@ Explicit `user_id` is an **optional sub-scope** for agents that serve multiple e
 
 ```
 # Serving Alice
-memory_add(scope="write",
+memory_add(
            text="Alice prefers email communication. Has Pro plan.",
            agent_id="support-bot",
            user_id="alice_123",
            conversation_id="<conv>")
 
 # Serving Bob — completely separate partition, same cognito account
-memory_add(scope="write",
+memory_add(
            text="Bob prefers Slack. On Enterprise plan.",
            agent_id="support-bot",
            user_id="bob_456",
            conversation_id="<conv>")
 
 # Search only returns Alice's memories
-memory_search(scope="read",
+memory_search(
               query="communication preference",
               agent_id="support-bot",
               user_id="alice_123",
@@ -74,11 +74,12 @@ Mixing creates invisible data.
 
 | Layer | Filter | Role of user_id |
 |---|---|---|
-| Personal memories (`memory_add`, `memory_search`, `memory_get_all`) | `(datapack_id, user_id, agent_id)` | Enforced on every read. One user cannot see another's un-promoted memories. |
-| Personal conversations (`conversation_list`, `conversation_get`) | Same tuple | Enforced. Cross-user reads require promotion. |
+| Personal memories (`memory_add`, `memory_search`, `memory_get_all`) | `(datapack_id, user_id)` | Enforced on every read. `agent_id` is not applied — one user sees all their own memories across every agent, but cannot see another user's un-promoted memories. |
+| Conversation listing (`conversation_list`) | `(datapack_id, user_id)` | Enforced. `agent_id` is not applied — you see all your own conversations across every agent. |
+| Conversation fetch (`conversation_get`) | `(datapack_id, user_id, agent_id)` | Enforced. Agent-owned: pass the creating `agent_id` or you get `agent_id_mismatch`. Cross-user reads require promotion. |
 | Team Shared Knowledge (`knowledgebase_search`) | `(datapack_id)` only | **Not used** — `user_id` is stripped when a memory is promoted to Knowledge. All team members on the datapack see the same Shared Knowledge. |
 
-The "Promote to Knowledge" action in the Cloud UI is the one way personal content crosses the user_id boundary. There is no MCP tool for promotion (user-initiated via UI only).
+Personal content crosses the `user_id` boundary through `memory_promote` or the Cloud UI's "Promote to Knowledge" action. The MCP path requires exact memory UUIDs, explicit user confirmation, and an owner/maintainer role; it moves the records into team-visible Shared Knowledge and evicts the private copies.
 
 ## Parameter summary
 

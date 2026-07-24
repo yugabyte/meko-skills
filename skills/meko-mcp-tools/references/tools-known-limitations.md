@@ -24,7 +24,7 @@ There are no MCP tools to:
 - Clear stuck work queue entries
 - Reset a failed pipeline
 
-KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:name/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the underlying vector index, source records, or vector data in the datapack's database.
+KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:datapack_id/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
 
 **Workaround:** For stuck or failed indexes, create a new index with a different name. Stale indexes remain in the database until manually cleaned up by an admin.
 
@@ -50,7 +50,7 @@ It works **poorly** for:
 
 1. **Write a single narrative summary** as a memory — one call, not row-by-row:
    ```
-   memory_add(scope="write",
+   memory_add(
        agent_id="<your session agent_id>",
        conversation_id="<session conversation_id>",
        text="Customer Complaints dataset has fields: Complaint ID (int PK), Date Submitted (date), Product (text, e.g. Mortgage/Credit Card), Sub-product (text), Issue (text), Company Response (text), State (text, 2-letter code), ZIP Code (text)")
@@ -60,8 +60,8 @@ It works **poorly** for:
 
 Never ingest CSV row-by-row into memory — each row becomes a fragmented fact with lost context.
 
-## No conversation search
+## No semantic search over conversation content
 
-`conversation_list` returns conversations by agent, but there is no semantic search across conversation content. To find a specific past exchange, you need to list conversations and inspect them individually with `conversation_get`.
+Semantic (meaning-based) search across stored conversation content is not part of the public tool surface today. To find a past conversation, browse with `conversation_list` (by datapack) and inspect candidates with `conversation_get`.
 
-For finding past knowledge by meaning, use `memory_search` instead — which is why storing key facts via `memory_add` alongside conversations is important.
+For finding past knowledge by meaning, `memory_search` remains the most reliable path — which is why storing key facts via `memory_add` alongside conversations is important.

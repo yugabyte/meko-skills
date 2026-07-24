@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Agent skills for YugabyteDB MCP Server and Meko platform",
-    "version": "1.2.0",
+    "version": "2.0.0",
     "pluginRoot": "./plugins"
   },
   "plugins": [
     {
       "name": "meko-agent-skills",
-      "description": "Meko MCP tools for memory, conversations, datapacks, and YugabyteDB databases.",
+      "description": "Meko MCP tools for memory, conversations, knowledge base, and datapacks.",
       "source": "./meko-agent-skills"
     }
   ]

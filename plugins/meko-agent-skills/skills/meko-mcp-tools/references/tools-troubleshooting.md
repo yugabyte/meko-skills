@@ -21,7 +21,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 1. **Never retry the identical failed call more than once.** If it fails twice with the same error, it's not transient — diagnose the cause.
 2. **Distinguish transient vs persistent failures.** "Connection already closed" is transient (retry once). "Permission denied" is persistent (stop, don't retry).
 3. **Don't guess parameters sequentially.** If a tool fails with one parameter format, don't try 4 variations. Check this skill's docs for the correct format first.
-4. **Use your session's `agent_id` consistently.** Pass the value the SessionStart hook injected (e.g. `claude_code:<repo-basename>` for Claude Code; `claude_desktop` for Claude Desktop) on every write and every personal read. Use `agent_id="meko_agent"` deliberately on `memory_search`/`memory_get_all` only when you want the cross-project common bucket — empty string also resolves to `meko_agent`, not a cross-agent fan-out. Don't switch between forms mid-session.
+4. **Use your session's `agent_id` consistently on writes.** Pass the value the SessionStart hook injected (e.g. `claude_code:<repo-basename>` for Claude Code; `claude_desktop` for Claude Desktop) on every write so rows are attributed correctly, and on `conversation_get` (which *does* enforce it — conversations are owned by the `agent_id` that created them; a wrong value returns `agent_id_mismatch`). Memory reads (`memory_search`/`memory_get_all`) and `conversation_list` are not affected — they return all your agents' rows for this user regardless of the `agent_id` passed. Don't switch write forms mid-session.
 
 ---
 
@@ -66,9 +66,9 @@ If you call `memory_add` with empty / None / whitespace `agent_id`, the server d
 
 Fix: always pass a concrete non-empty `agent_id`. Fetch the value the SessionStart hook injected into `additionalContext` and pass it verbatim. Use `agent_id="meko_agent"` only when you genuinely want a fact in the cross-project pool (user identity, global preferences).
 
-### "My reads return fewer results than I expected"
+### "My memory reads return fewer results than I expected"
 
-`memory_search` and `memory_get_all` filter strictly on your passed `agent_id`. A memory written by `claude-code:<slug-A>` is invisible to a search with `agent_id="cursor:<slug-B>"`. If you need a broader view, call repeatedly across the agent_ids you want to cover, or point the user at the UI's Memory Summary page (which shows every row regardless of agent_id).
+`memory_search` and `memory_get_all` do **not** filter by `agent_id` — a single call returns all of your memories for this user across every agent, so a mismatched `agent_id` is not the cause. If results seem thin, check that you're on the right datapack (`datapack_id`), that the write actually landed (mem0 extraction is lossy — see `tools-memory-vs-conversation.md`), and that the query is semantically close to the stored text. `conversation_get`, by contrast, *is* agent-owned: pass the exact `agent_id` the conversation was created under, or you'll get `agent_id_mismatch`. `conversation_list` is not agent-filtered — it returns the datapack's conversations for your user regardless of the `agent_id` passed.
 
 ### "I'm seeing rows tagged with legacy agent_id values"
 
