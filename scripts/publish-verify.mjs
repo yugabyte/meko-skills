@@ -70,9 +70,13 @@ function hasAncestor(child, parent) {
   return relPath === "" || (!relPath.startsWith("..") && !relPath.startsWith("/"));
 }
 
-function resolvePluginSource(source) {
+function resolvePluginSource(source, pluginRoot) {
   if (typeof source !== "string") return null;
-  return resolve(ROOT, source);
+  // metadata.pluginRoot is prepended to relative plugin sources. With
+  // pluginRoot="./plugins" and source="./meko-agent-skills", the plugin root
+  // resolves to <repo>/plugins/meko-agent-skills.
+  const base = join(ROOT, pluginRoot || ".");
+  return resolve(base, source);
 }
 
 /**
@@ -127,13 +131,15 @@ for (const f of mdFiles.filter((p) => p.endsWith("SKILL.md"))) {
 
 // 3. Root marketplace catalog points at a self-contained plugin under /plugins.
 const marketplacePath = join(ROOT, ".claude-plugin", "marketplace.json");
+let pluginRoot = ".";
 let pluginDir = null;
 if (!existsSync(marketplacePath)) {
   errors.push("missing .claude-plugin/marketplace.json");
 } else {
   const marketplace = readJson(marketplacePath, ".claude-plugin/marketplace.json");
-  if (marketplace?.metadata?.pluginRoot !== undefined) {
-    errors.push("marketplace metadata.pluginRoot is unsupported and must be omitted");
+  pluginRoot = marketplace?.metadata?.pluginRoot || ".";
+  if (pluginRoot !== "./plugins") {
+    errors.push(`marketplace metadata.pluginRoot must be './plugins' (got: ${pluginRoot})`);
   }
   const entry = (marketplace?.plugins || []).find((p) => p?.name === PLUGIN_NAME);
   if (!entry) {
@@ -142,10 +148,10 @@ if (!existsSync(marketplacePath)) {
     if (entry.strict === false) {
       errors.push(`${PLUGIN_NAME} must not set strict:false because plugin.json declares components`);
     }
-    if (entry.source !== `./plugins/${PLUGIN_NAME}`) {
-      errors.push(`${PLUGIN_NAME} source must be './plugins/${PLUGIN_NAME}' (got: ${entry.source})`);
+    if (entry.source !== `./${PLUGIN_NAME}`) {
+      errors.push(`${PLUGIN_NAME} source must be './${PLUGIN_NAME}' when pluginRoot is './plugins' (got: ${entry.source})`);
     }
-    pluginDir = resolvePluginSource(entry.source);
+    pluginDir = resolvePluginSource(entry.source, pluginRoot);
     if (!pluginDir || !hasAncestor(pluginDir, join(ROOT, "plugins"))) {
       errors.push(`${PLUGIN_NAME} source must resolve under /plugins`);
     }
@@ -172,6 +178,8 @@ const requiredPluginPaths = [
   ".mcp.json",
   "skills/meko-mcp-tools/SKILL.md",
   "skills/meko-mcp-tools-desktop/SKILL.md",
+  "skills/meko-select-datapack/SKILL.md",
+  "skills/meko-select-datapack-desktop/SKILL.md",
   "hooks/hooks.json",
   "hooks-handlers/lib/capture.js",
 ];

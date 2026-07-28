@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Meko MCP Tools — Claude Desktop Setup
 
-Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all <!--tool-count-->23<!--/tool-count--> Meko MCP tools correctly, and to handle errors gracefully.
+Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all 23 Cloud Meko tools correctly, and to handle errors gracefully. Install the companion `meko-select-datapack-desktop` skill if you work across multiple datapacks.
 
 ## Setup
 
@@ -22,13 +22,9 @@ Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no 
 
 **Option A — Plugin marketplace** (recommended):
 
-In Claude Desktop: Customize > Personal plugins > Browse plugin marketplace. Search for `meko-agent-skills-claude-desktop` and install.
+In Claude Desktop: Customize > Personal plugins > Browse plugin marketplace. Search for `meko-agent-skills` and install.
 
-**Option B — .skill file:**
-
-Download `meko-mcp-tools-desktop.skill` from the [releases page](https://github.com/yugabyte/meko-skills/releases) and drag it into Claude Desktop (or use Customize > Skills > Import).
-
-**Option C — Manual install:**
+**Option B — Manual install:**
 
 ```bash
 git clone https://github.com/yugabyte/meko-skills.git
@@ -159,7 +155,7 @@ An explicit "remember this" is one of the narrow cases where the agent calls `me
 | Installation | `claude plugin install meko-agent-skills` | Plugin marketplace / .skill file / manual |
 | MCP connection | `claude mcp add --transport http meko <url>` | `claude_desktop_config.json` |
 | Automatic capture | Hooks (SessionStart, PreCompact, SessionEnd) | Skill-driven — agent posts each turn via `conversation_add_message`; server extracts memories |
-| Periodic checkpoints | CronCreate (every 10 min) | Not available |
+| Periodic checkpoints | Non-interrupting background timer (every 10 min by default) | Not available |
 | Proactive activation | Deterministic (SessionStart hook always injects doctrine) | Model-judged from skill description; best-effort. Backstop with a personal-preferences snippet (Step 4) |
 | agent_id | `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`) | `claude_desktop` |
 
@@ -183,7 +179,7 @@ On Cloud Meko, `agent_id` is a row-level column value — any string works, it n
 
 ### "Conversation tools don't work"
 
-Conversation tools require Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`). The other 19 tools work without Langfuse. If you don't need conversation persistence, you can skip this.
+Conversation tools require Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`) on self-hosted deployments. The other 17 tools do not depend on Langfuse. If you do not need conversation persistence, you can skip conversation capture.
 
 ### "Skill doesn't trigger"
 

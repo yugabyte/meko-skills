@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.0.2"
+  version: "3.0.1"
   tags: mcp, tools, datapack, memory, conversation, rag, meko
 ---
 <!--

@@ -151,7 +151,7 @@ Capture stores the full conversation (preserves structure) and extraction derive
 
 The Meko plugin captures conversations automatically via three mechanisms:
 
-1. **Periodic checkpoint (~10 min)** — Agent-driven via CronCreate, uses `conversation_add_message` MCP tool directly
+1. **Periodic checkpoint (~10 min)** — Non-interrupting background timer started by the session hook, uses `conversation_add_message` through the shared capture handler
 2. **PreCompact hook** — Shell script that fires before Claude Code's auto-compaction, captures via MCP JSON-RPC
 3. **SessionEnd hook** — Shell script that fires at session termination, captures final exchanges
 

@@ -14,13 +14,13 @@ specific language governing permissions and limitations under the License.
 -->
 # agent_id — multi-agent identity on Cloud Meko
 
-`agent_id` identifies **which agent wrote a memory or created a conversation**. It is not a constant. Pick a value that represents the client you're acting for and use it consistently for writes and trace attribution within this session.
+`agent_id` identifies **which agent wrote a memory or created a conversation**. It is not a constant. Pick a value that represents the specific agent + project you're acting for, use it consistently for writes within this session, and use it to scope your own reads.
 
-The Cloud UI (`cloud.mekodata.ai`) renders `agent_id` as a badge on every memory and conversation row — so the value you pick is user-visible. Multiple different agents can write into the same datapack, and both the UI and one `memory_search` show the user's full cross-agent picture.
+The Cloud UI (`cloud.mekodata.ai`) renders `agent_id` as a badge on every memory and conversation row — so the value you pick is user-visible. Multiple different agents with different `agent_id` values can write into the same datapack; each one's personal view is scoped to itself, and the UI shows the full cross-agent picture.
 
 ## The three buckets
 
-Each memory is tagged with the writing `agent_id`. Pick the right value up front so attribution remains meaningful:
+Memories segregate strictly by `agent_id`. Pick the right bucket up front:
 
 | Pattern | When to use | Example |
 |---|---|---|
@@ -28,15 +28,15 @@ Each memory is tagged with the writing `agent_id`. Pick the right value up front
 | `<client>:<repo-basename>` | Coding agents (Claude Code, Cursor) writing project-scoped facts. **Not used by Claude Desktop**, but you'll see these values on rows written by other clients in the same datapack. | `claude_code:meko-mcp-server` |
 | `meko_agent` | Cross-project common bucket — facts any agent should see regardless of project (user identity, global preferences). The server stores empty/missing `agent_id` here automatically. | `meko_agent` |
 
-**For Claude Desktop, the practical default is `claude_desktop`; use `meko_agent` for genuinely cross-client facts.** This controls attribution, not read visibility: the user's other agents can read either value.
+**For Claude Desktop, the practical default is `claude_desktop` for personal context and `meko_agent` for genuinely cross-client facts.** When the user's information is project-agnostic ("the user is named Amiram", "the user prefers vim"), prefer `meko_agent` so other clients (Claude Code, Cursor) can see it too.
 
-**Don't write with another client's shape.** A Claude Desktop session that writes with `agent_id="claude_code"` (or `claude_code:something`) creates rows the UI will incorrectly attribute to Claude Code. Use `claude_desktop` when Desktop is running.
+**Don't write with another client's shape.** A Claude Desktop session that writes with `agent_id="claude_code"` (or `claude_code:something`) creates rows other agents will attribute to Claude Code and skew retrieval scoping for both. Use `claude_desktop` when Desktop is what's running.
 
 ## Valid characters
 
 The server stores `agent_id` as a row-level column value — it never becomes a PostgreSQL identifier on Cloud. Any printable string works: colons, hyphens, dots, underscores, spaces. Stay within what's readable in the UI badge.
 
-Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`, `claude-code`, `claude_code`, `cursor:<slug>`, `claude-code:-Users-...`, `claude-desktop` (hyphenated). None of them cause errors or prevent memory recall. New writes should follow the table above.
+Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`, `claude-code`, `claude_code`, `cursor:<slug>`, `claude-code:-Users-...`, `claude-desktop` (hyphenated). None of them cause errors. To query those rows, pass the literal legacy value as `agent_id`. New writes should follow the table above.
 
 ## How agent_id filters reads and writes
 
@@ -47,17 +47,18 @@ Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`,
 
 ### Personal memory reads — `memory_search`, `memory_get_all`
 
-Filter tuple: `(datapack_id, user_id)`. `agent_id` is not applied on memory reads.
+Filter tuple: `(datapack_id, user_id)`. `agent_id` is **not** applied on memory reads.
 
 - `user_id` is **always enforced**: one user cannot read another team member's un-promoted memories directly from MCP.
-- `agent_id` does **not** filter results. One search returns this user's memories across every agent, including `claude_desktop`, project agents, legacy values, and the `meko_agent` common bucket.
+- A single `memory_search` returns this user's memories across every `agent_id`. The argument attributes the Langfuse trace; it does not filter results.
+- Do not fan out across agent IDs. Desktop, coding-client, legacy, and `meko_agent` rows are already included in one search.
 
-Empirically verified 2026-07-23 on Cloud prod: memories written under two distinct `agent_id` values were both returned by a search using a third value.
+Empirically verified 2026-07-23 on Cloud prod.
 
 ### Personal conversation reads — `conversation_get`, `conversation_list`
 
-- `conversation_get` is agent-owned: pass the exact `agent_id` that created the conversation.
-- `conversation_list` is not agent-filtered and returns the datapack's conversations for this user across agents.
+- `conversation_get` is agent-owned. Pass the exact `agent_id` that created the conversation; another value returns `agent_id_mismatch`.
+- `conversation_list` is scoped to `(datapack_id, user_id)` and returns this user's conversations across agents. Its `agent_id` argument is trace attribution only.
 
 ### Team-shared reads — `knowledgebase_search`
 
@@ -75,7 +76,7 @@ The originating `agent_id` is preserved in each result's `metadata_filters.agent
 memory_add(agent_id=X, text=...)
    │
    ▼
-mem0_collection  ── personal memories, scoped (datapack, user, agent)
+mem0_collection  ── personal memories, tagged (datapack, user, agent)
    │
    │   memory_promote (exact UUIDs + explicit confirmation)
    │   or UI "Promote to Knowledge" (Learnings tab)
@@ -97,14 +98,14 @@ knowledgebase_search(agent_id=anything, query=...)
 
 If the user asks "what do you know about X?":
 
-1. **`memory_search(agent_id="claude_desktop", query="X")`** — returns all of this user's personal memories across every agent. `agent_id` attributes the trace.
+1. **`memory_search(agent_id="claude_desktop", query="X")`** — returns all of this user's personal memories across every `agent_id`. One call covers Desktop, coding clients, legacy values, and the common bucket.
 2. **`knowledgebase_search(agent_id="<anything>", datapack_id="<datapack>", query="X")`** — returns team-shared knowledge. Useful when the answer may have been promoted by the user or a teammate.
 
-Always tell the user which surface you searched: personal memory or team-shared knowledge.
+Always tell the user what scope you searched, so they understand why the answer is or isn't there. Example wording: "I found this in your personal memories" vs. "I found this in your team's shared knowledge."
 
-## Optional sub-scoping
+## Sub-scoping within an agent
 
-Optional parameters can narrow a call further:
+Optional parameters narrow further within the same `agent_id`:
 - `user_id` — explicitly scope writes/reads to a specific end-user if your agent serves multiple (rare in Claude Desktop; more common in API products)
 - `run_id` — per-execution run
 
@@ -112,6 +113,6 @@ Available on `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all
 
 ## Things I checked and found in-data on real Cloud datapacks
 
-- `agent_id="agent"` appears on many legacy rows — it was the previous canonical constant. New writes should use the schema in the table above; memory reads still return the legacy rows.
-- Memory Summary UI (`/datapacks/<name>/memory-summary`) shows every row for the user and renders the stored `agent_id` as a badge, consistent with cross-agent MCP memory reads.
+- `agent_id="agent"` appears on many legacy rows — it was the previous canonical constant. New writes should use the schema in the table above; query legacy rows with `agent_id="agent"` explicitly.
+- Memory Summary UI (`/datapacks/<name>/memory-summary`) is agent-id-agnostic — shows every row in the datapack, renders the stored `agent_id` as a badge. The filtering is MCP-side only.
 - Subagents spawned via the `Agent` tool in Claude Code do not automatically inherit the parent's `agent_id`. The parent must inject it into the spawn prompt. See the SKILL.md "When spawning subagents" section in the coding-agent skill.

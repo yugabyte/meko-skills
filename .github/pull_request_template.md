@@ -13,10 +13,10 @@ CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 -->
 
-## Skill name and maintainer
+## Skill name and author
 
-<!-- e.g. meko-mcp-tools / maintainer: meko -->
-<!-- New community skill: set maintainer: community in your SKILL.md frontmatter -->
+<!-- e.g. meko-mcp-tools / metadata.author: Meko -->
+<!-- For a new skill, identify the author or owning team in metadata.author. -->
 
 ## What changed
 
@@ -42,7 +42,7 @@ specific language governing permissions and limitations under the License.
 ## Checklist
 
 - [ ] Issue linked above
-- [ ] `maintainer` field set correctly in SKILL.md frontmatter (`meko` or `community`)
+- [ ] `metadata.author` identifies the skill author or owning team
 - [ ] `SKILL.md` version bumped (if behavioral change to existing skill)
 - [ ] Reference files updated (if tool parameters or error handling changed)
 - [ ] Apache 2.0 source header on all new files
