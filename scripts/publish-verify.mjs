@@ -70,13 +70,9 @@ function hasAncestor(child, parent) {
   return relPath === "" || (!relPath.startsWith("..") && !relPath.startsWith("/"));
 }
 
-function resolvePluginSource(source, pluginRoot) {
+function resolvePluginSource(source) {
   if (typeof source !== "string") return null;
-  // metadata.pluginRoot is prepended to relative plugin sources. With
-  // pluginRoot="./plugins" and source="./meko-agent-skills", the plugin root
-  // resolves to <repo>/plugins/meko-agent-skills.
-  const base = join(ROOT, pluginRoot || ".");
-  return resolve(base, source);
+  return resolve(ROOT, source);
 }
 
 /**
@@ -131,15 +127,16 @@ for (const f of mdFiles.filter((p) => p.endsWith("SKILL.md"))) {
 
 // 3. Root marketplace catalog points at a self-contained plugin under /plugins.
 const marketplacePath = join(ROOT, ".claude-plugin", "marketplace.json");
-let pluginRoot = ".";
 let pluginDir = null;
 if (!existsSync(marketplacePath)) {
   errors.push("missing .claude-plugin/marketplace.json");
 } else {
   const marketplace = readJson(marketplacePath, ".claude-plugin/marketplace.json");
-  pluginRoot = marketplace?.metadata?.pluginRoot || ".";
-  if (pluginRoot !== "./plugins") {
-    errors.push(`marketplace metadata.pluginRoot must be './plugins' (got: ${pluginRoot})`);
+  // Claude Code currently ignores pluginRoot during installation even though
+  // the validator accepts it (anthropics/claude-code#61224). Keep the full
+  // source path so marketplace installs resolve the bundled plugin correctly.
+  if (marketplace?.metadata?.pluginRoot !== undefined) {
+    errors.push("marketplace metadata.pluginRoot is unsupported and must be omitted");
   }
   const entry = (marketplace?.plugins || []).find((p) => p?.name === PLUGIN_NAME);
   if (!entry) {
@@ -148,10 +145,10 @@ if (!existsSync(marketplacePath)) {
     if (entry.strict === false) {
       errors.push(`${PLUGIN_NAME} must not set strict:false because plugin.json declares components`);
     }
-    if (entry.source !== `./${PLUGIN_NAME}`) {
-      errors.push(`${PLUGIN_NAME} source must be './${PLUGIN_NAME}' when pluginRoot is './plugins' (got: ${entry.source})`);
+    if (entry.source !== `./plugins/${PLUGIN_NAME}`) {
+      errors.push(`${PLUGIN_NAME} source must be './plugins/${PLUGIN_NAME}' (got: ${entry.source})`);
     }
-    pluginDir = resolvePluginSource(entry.source, pluginRoot);
+    pluginDir = resolvePluginSource(entry.source);
     if (!pluginDir || !hasAncestor(pluginDir, join(ROOT, "plugins"))) {
       errors.push(`${PLUGIN_NAME} source must resolve under /plugins`);
     }

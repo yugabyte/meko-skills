@@ -58,7 +58,7 @@ This repository has three public-facing surfaces with different consumers:
 
 ```
 .claude-plugin/
-└── marketplace.json          # Marketplace catalog; metadata.pluginRoot points at ./plugins
+└── marketplace.json          # Marketplace catalog; source points at ./plugins/meko-agent-skills
 plugins/
 └── meko-agent-skills/
     ├── .claude-plugin/plugin.json

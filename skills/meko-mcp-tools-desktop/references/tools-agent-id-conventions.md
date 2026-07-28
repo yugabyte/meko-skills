@@ -14,13 +14,13 @@ specific language governing permissions and limitations under the License.
 -->
 # agent_id — multi-agent identity on Cloud Meko
 
-`agent_id` identifies **which agent wrote a memory or created a conversation**. It is not a constant. Pick a value that represents the specific agent + project you're acting for, use it consistently for writes within this session, and use it to scope your own reads.
+`agent_id` identifies **which agent wrote a memory or created a conversation**. It is not a constant. Pick a value that represents the running client and use it consistently for write attribution and trace attribution.
 
-The Cloud UI (`cloud.mekodata.ai`) renders `agent_id` as a badge on every memory and conversation row — so the value you pick is user-visible. Multiple different agents with different `agent_id` values can write into the same datapack; each one's personal view is scoped to itself, and the UI shows the full cross-agent picture.
+The Cloud UI (`cloud.mekodata.ai`) renders `agent_id` as a badge on every memory and conversation row — so the value you pick is user-visible. Multiple agents can write into the same datapack, and personal memory reads show the user's rows across those agent IDs.
 
 ## The three buckets
 
-Memories segregate strictly by `agent_id`. Pick the right bucket up front:
+Memory writes retain the supplied `agent_id` as provenance. Pick the right attribution bucket up front:
 
 | Pattern | When to use | Example |
 |---|---|---|
@@ -36,7 +36,7 @@ Memories segregate strictly by `agent_id`. Pick the right bucket up front:
 
 The server stores `agent_id` as a row-level column value — it never becomes a PostgreSQL identifier on Cloud. Any printable string works: colons, hyphens, dots, underscores, spaces. Stay within what's readable in the UI badge.
 
-Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`, `claude-code`, `claude_code`, `cursor:<slug>`, `claude-code:-Users-...`, `claude-desktop` (hyphenated). None of them cause errors. To query those rows, pass the literal legacy value as `agent_id`. New writes should follow the table above.
+Pre-existing data in real datapacks includes a mix of legacy shapes — `agent`, `claude-code`, `claude_code`, `cursor:<slug>`, `claude-code:-Users-...`, `claude-desktop` (hyphenated). They remain visible through normal memory reads because `agent_id` does not filter those reads. New writes should follow the table above.
 
 ## How agent_id filters reads and writes
 

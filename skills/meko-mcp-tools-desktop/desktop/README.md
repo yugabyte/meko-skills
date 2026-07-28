@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Meko MCP Tools — Claude Desktop Setup
 
-Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all 23 Cloud Meko tools correctly, and to handle errors gracefully. Install the companion `meko-select-datapack-desktop` skill if you work across multiple datapacks.
+Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all <!--tool-count-->23<!--/tool-count--> Cloud Meko tools correctly, and to handle errors gracefully. Install the companion `meko-select-datapack-desktop` skill if you work across multiple datapacks.
 
 ## Setup
 

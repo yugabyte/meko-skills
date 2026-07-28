@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # agent_id — multi-agent identity on Cloud Meko
 
-`agent_id` identifies **which agent wrote a memory or created a conversation**. It is not a constant. Pick a value that represents the specific agent + project you're acting for, use it consistently for writes within this session, and use it to scope your own reads.
+`agent_id` identifies **which agent wrote a memory or created a conversation**. It is not a constant. Pick a value that represents the specific agent + project, use it consistently for write attribution, and pass it on reads for trace attribution.
 
 The Cloud UI (`cloud.mekodata.ai`) renders `agent_id` as a badge on every memory and conversation row — so the value you pick is user-visible. Multiple different agents with different `agent_id` values can write into the same datapack; the badge records who wrote each row, and both the UI and a `memory_search` show the full cross-agent picture for the user.
 

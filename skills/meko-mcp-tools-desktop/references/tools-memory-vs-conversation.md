@@ -163,7 +163,7 @@ This is more than just text — tool calls and results are critical context for 
 
 ### Seed-based deduplication
 
-Give each posted turn a stable seed such as `<conversation_id>:claude-desktop:<sequential_number>`. Reusing the same seed for a retry makes that retry idempotent. Desktop has no overlapping hook-based capture mechanisms, so keep the sequence locally within the conversation.
+`conversation_add_message` accepts an optional client-supplied `seed`. Give each posted turn a stable value such as `<conversation_id>:claude-desktop:<sequential_number>`. Reusing the same seed for a retry produces the same deterministic message ID. Desktop has no overlapping hook-based capture mechanisms, so keep the sequence locally within the conversation.
 
 ### When to manually store conversations
 

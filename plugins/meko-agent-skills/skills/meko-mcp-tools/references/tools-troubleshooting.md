@@ -40,17 +40,11 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 
 ---
 
-## Scope parameter errors
+## Legacy scope parameter errors
 
 **Error:** `Insufficient scope: 'all'. This tool requires 'read' or higher.`
 
-The only valid scope values are: `"read"`, `"write"`, `"admin"`.
-
-- Use `"read"` for all read operations (default choice)
-- Use `"write"` for inserts, updates, creates, memory writes
-- Use `"admin"` only for destructive deletes
-
-**Never use:** `"all"`, `"readwrite"`, `"rw"`, or any other value.
+Current Cloud Meko tool schemas do not expose a `scope` argument. This error indicates a stale client or legacy deployment. Refresh the MCP tool catalog and omit `scope`; if the server still requires it, follow that deployment's published schema rather than guessing values.
 
 ---
 

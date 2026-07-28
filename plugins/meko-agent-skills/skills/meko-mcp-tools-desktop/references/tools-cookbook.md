@@ -22,7 +22,7 @@ Every tool example below shows the correct parameters, expected response, and co
 
 ## Memory Tools
 
-**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for client-personal context, or `meko_agent` for genuinely cross-project facts (user identity, global preferences). Personal writes are scoped strictly by `agent_id` — other agents won't see your writes on personal reads unless they pass the same exact value.
+**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for client-personal context, or `meko_agent` for genuinely cross-project facts (user identity, global preferences). Writes retain that value as provenance; `memory_search` and `memory_get_all` still return this user's memories across all agent IDs.
 
 ### memory_add
 

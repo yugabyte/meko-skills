@@ -17,7 +17,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "2.7.2"
+  version: "2.7.3"
   tags: mcp, yugabytedb, tools, datapack, memory, conversation, rag, meko, desktop
 ---
 <!--
