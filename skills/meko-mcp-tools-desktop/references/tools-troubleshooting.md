@@ -21,7 +21,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 1. **Never retry the identical failed call more than once.** If it fails twice with the same error, it's not transient — diagnose the cause.
 2. **Distinguish transient vs persistent failures.** "Connection already closed" is transient (retry once). "Permission denied" is persistent (stop, don't retry).
 3. **Don't guess parameters sequentially.** If a tool fails with one parameter format, don't try 4 variations. Check this skill's docs for the correct format first.
-4. **Use your session's `agent_id` consistently.** For Claude Desktop the default is `claude_desktop`; for cross-project common facts use `meko_agent`. Other clients use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). Use `agent_id="meko_agent"` deliberately on `memory_search`/`memory_get_all` only when you want the common bucket — empty string also resolves to `meko_agent`, not a cross-agent fan-out. Don't switch between forms mid-session.
+4. **Use your session's `agent_id` consistently on writes.** For Claude Desktop the default is `claude_desktop`; use `meko_agent` when writing cross-project facts. Other clients use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). Memory reads and `conversation_list` span all of this user's agents regardless of the value passed; `conversation_get` requires the creating agent's exact value.
 
 ---
 
@@ -40,20 +40,6 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 
 ---
 
-## Scope parameter errors
-
-**Error:** `Insufficient scope: 'all'. This tool requires 'read' or higher.`
-
-The only valid scope values are: `"read"`, `"write"`, `"admin"`.
-
-- Use `"read"` for all read operations (default choice)
-- Use `"write"` for inserts, updates, creates, memory writes
-- Use `"admin"` only for destructive deletes
-
-**Never use:** `"all"`, `"readwrite"`, `"rw"`, or any other value.
-
----
-
 ## agent_id errors
 
 On the Cloud multi-tenant schema, `agent_id` is a TEXT column value — not a PostgreSQL identifier — so arbitrary strings are accepted.
@@ -68,7 +54,7 @@ Fix: always pass a concrete non-empty `agent_id`. For Claude Desktop use `agent_
 
 ### "My reads return fewer results than I expected"
 
-`memory_search` and `memory_get_all` filter strictly on your passed `agent_id`. A memory written by `claude-code:<slug-A>` is invisible to a search with `agent_id="cursor:<slug-B>"`. If you need a broader view, call repeatedly across the agent_ids you want to cover, or point the user at the UI's Memory Summary page (which shows every row regardless of agent_id).
+`memory_search` and `memory_get_all` do not filter by `agent_id`: one call returns this user's memories across every agent. If results seem thin, check the `datapack_id`, confirm the write landed, and remember that mem0 extraction can be lossy. `conversation_get` is agent-owned and requires the exact creating `agent_id`; `conversation_list` is not agent-filtered.
 
 ### "I'm seeing rows tagged with legacy agent_id values"
 
@@ -80,7 +66,7 @@ Pre-existing data may be tagged `"agent"`, `"claude_code"`, `"cursor:<slug>"`, o
 
 | Tool | Safe to retry? | Why |
 |------|---------------|-----|
-| All `read` scope tools | Yes | Reads are idempotent |
+| All read-only tools | Yes | Reads are idempotent |
 | `memory_add` | Yes (once) | Mem0 has dedup logic |
 | `memory_update` | Yes (once) | Overwrites same ID |
 | `memory_delete_by_id` | Yes | Deleting already-deleted is a no-op |
