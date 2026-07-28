@@ -40,20 +40,6 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 
 ---
 
-## Scope parameter errors
-
-**Error:** `Insufficient scope: 'all'. This tool requires 'read' or higher.`
-
-The only valid scope values are: `"read"`, `"write"`, `"admin"`.
-
-- Use `"read"` for all read operations (default choice)
-- Use `"write"` for inserts, updates, creates, memory writes
-- Use `"admin"` only for destructive deletes
-
-**Never use:** `"all"`, `"readwrite"`, `"rw"`, or any other value.
-
----
-
 ## agent_id errors
 
 On the Cloud multi-tenant schema, `agent_id` is a TEXT column value — not a PostgreSQL identifier — so arbitrary strings are accepted.
@@ -80,7 +66,7 @@ Pre-existing data may be tagged `"agent"`, `"claude_code"`, `"cursor:<slug>"`, o
 
 | Tool | Safe to retry? | Why |
 |------|---------------|-----|
-| All `read` scope tools | Yes | Reads are idempotent |
+| All read-only tools | Yes | Reads are idempotent |
 | `memory_add` | Yes (once) | Mem0 has dedup logic |
 | `memory_update` | Yes (once) | Overwrites same ID |
 | `memory_delete_by_id` | Yes | Deleting already-deleted is a no-op |

@@ -79,21 +79,20 @@ All three fields — `input`, `output`, and `reasoning` — must contain the **e
 
 The purpose of conversation storage is to create a faithful, replayable record. A rephrased summary loses the original wording, tone, and detail — making the stored conversation useless for review, debugging, or audit.
 
-## Personal memory vs. team-shared knowledge — the three read paths
+## Personal memory vs. team-shared knowledge — the two read paths
 
-Agents on Cloud Meko have three distinct read surfaces. Pick the right one for the question.
+Agents on Cloud Meko have two distinct read surfaces. Pick the right one for the question.
 
 | Read path | What it returns | How to call |
 |---|---|---|
-| Your own desktop memories | Memories you wrote under this `agent_id`, filtered by `(datapack_id, user_id, agent_id)` | `memory_search(agent_id="claude_desktop", query="...", ...)` |
-| Cross-project common bucket | Memories any agent (including this one) wrote with `agent_id="meko_agent"` — the empty-default bucket for genuinely cross-project facts | `memory_search(agent_id="meko_agent", query="...", ...)` |
+| Your personal memories | Everything you and any of your agents wrote for this user, filtered by `(datapack_id, user_id)` and not by `agent_id` | `memory_search(agent_id="claude_desktop", query="...", ...)` — `agent_id` attributes the trace |
 | Team's shared knowledge | Promoted memories + uploaded documents, visible to every member of the datapack | `knowledgebase_search(agent_id="<anything>", datapack_id="<datapack UUID>", query="...")` — `agent_id` is ignored |
 
-For a true fan-out across other clients' buckets (e.g. also see what was written from `claude_code:some-repo` or `cursor:foo`), call `memory_search` once per agent_id — there's no single-call shortcut. Empty string is rewritten to `meko_agent` server-side; it does not drop the filter.
+One `memory_search` already spans this user's memories across all agents; no per-agent fan-out is needed.
 
 ### How content gets into each surface
 
-- **Personal memories** — written by `memory_add`. Scoped per-user and per-agent from the moment of write. Only the writer sees them via MCP reads.
+- **Personal memories** — written by `memory_add`. The `agent_id` records the writer but does not restrict reads; memories are scoped per-user, so any of that user's agents can read them and no other user can.
 - **Team-shared Shared Knowledge** — arrives two ways:
   1. An agent calls `memory_promote` for exact, user-confirmed memory UUIDs, or the user promotes them from the Cloud UI's Learnings tab. Promotion moves the memories and graph context into shared knowledge, strips `user_id`, preserves originating `agent_id` as provenance, and evicts the private mem0 records.
   2. The user uploads a file via Datapack → Actions → **Add Knowledge** in the Cloud UI. PDF/TXT/MD/JSON/MP4 up to 5MB each.
@@ -104,22 +103,20 @@ For a true fan-out across other clients' buckets (e.g. also see what was written
 
 ### When the user asks "what do you know about X?"
 
-A full sweep is three calls (budget for it — each is 2-6 seconds):
+A full sweep is two calls (budget for it — each is 2-6 seconds):
 
 ```
 memory_search(agent_id="claude_desktop", query="X", conversation_id=..., ...)
-memory_search(agent_id="meko_agent", query="X", conversation_id=..., ...)  # cross-project common bucket
 knowledgebase_search(agent_id="<anything>", datapack_id="<uuid>", query="X", conversation_id=..., ...)
 ```
 
+The single `memory_search` includes everything this user and their other agents wrote in the datapack.
+
 When you answer, be explicit about scope so the user knows why something is or isn't there:
 
-- "I found this in your own desktop memories…"
-- "I found this in your common cross-project bucket (something you or another agent wrote under `meko_agent`)…"
+- "I found this in your personal memories (something you or another of your agents saved earlier)…"
 - "I found this in your team's Shared Knowledge — someone (you or a teammate) promoted it earlier…"
-- "I couldn't find anything in your personal memories. You might want to check the Cloud UI's Memory Summary tab for a cross-agent view."
-
-For a true fan-out across other clients' buckets (e.g. also see what was written from `claude_code:some-repo` or `cursor:foo`), call `memory_search` once per known agent_id — empty string just resolves to `meko_agent`, not a fan-out.
+- "I couldn't find anything in your personal memories. You might want to check the Cloud UI's Memory Summary tab."
 
 ## Memory limitations for structured data
 
