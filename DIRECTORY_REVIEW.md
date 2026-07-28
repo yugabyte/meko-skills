@@ -25,7 +25,7 @@ When the Claude Code plugin hooks are enabled, `SessionStart` creates or resumes
 
 Claude Desktop has no lifecycle hooks. Its Desktop skill instead directs Claude to create a conversation and transparently post substantive turns with `conversation_add_message`; the companion selector stores the active datapack as a tagged Meko memory. Manual installation remains subject to model-driven skill activation.
 
-Meko privacy policy: [https://www.yugabyte.com/privacy-policy/](https://www.yugabyte.com/privacy-policy/)
+Meko Connector and Skills privacy policy: [https://github.com/yugabyte/meko-skills/blob/main/PRIVACY_POLICY.md](https://github.com/yugabyte/meko-skills/blob/main/PRIVACY_POLICY.md) (also linked from the README "Privacy Policy" section, as the directory submission requirements expect). Yugabyte corporate privacy notice (websites and accounts): [https://www.yugabyte.com/privacy-policy/](https://www.yugabyte.com/privacy-policy/)
 
 Data is retained according to the Meko account and datapack retention settings exposed in the Meko Cloud UI and applicable customer agreements. Users can delete memories, conversations, datapacks, and knowledge-base content through Meko tools or the Meko Cloud UI where their role permits it.
 
