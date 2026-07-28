@@ -26,12 +26,10 @@ specific language governing permissions and limitations under the License.
 - [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message
 - [tools-conversation-reasoning.md](tools-conversation-reasoning.md) — Authoring the `reasoning` and `plan` fields on `conversation_add_message`, with worked examples
 - [tools-datapack-workflow.md](tools-datapack-workflow.md) — Datapack lifecycle, datapack_id routing, and multi-database patterns
-- [tools-rag-workflow.md](tools-rag-workflow.md) — End-to-end RAG pipeline: source registration, index creation, status polling
-
-## Safety & Permissions
+- [tools-rag-workflow.md](tools-rag-workflow.md) — Shared-knowledge search and the Cloud UI workflow for adding documents
 
 ## Conventions & Deduplication
-- [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — agent_id naming rules, hyphen prohibition, and namespace isolation
+- [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — agent_id naming, write attribution, and read-scoping rules
 - [tools-user-id-conventions.md](tools-user-id-conventions.md) — user_id vs agent_id: when to pass each, and how they scope memory
 - [tools-conversation-dedup.md](tools-conversation-dedup.md) — Seed-based deterministic trace IDs for Langfuse deduplication
 

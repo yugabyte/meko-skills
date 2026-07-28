@@ -132,6 +132,9 @@ if (!existsSync(marketplacePath)) {
   errors.push("missing .claude-plugin/marketplace.json");
 } else {
   const marketplace = readJson(marketplacePath, ".claude-plugin/marketplace.json");
+  // Claude Code currently ignores pluginRoot during installation even though
+  // the validator accepts it (anthropics/claude-code#61224). Keep the full
+  // source path so marketplace installs resolve the bundled plugin correctly.
   if (marketplace?.metadata?.pluginRoot !== undefined) {
     errors.push("marketplace metadata.pluginRoot is unsupported and must be omitted");
   }
@@ -172,6 +175,8 @@ const requiredPluginPaths = [
   ".mcp.json",
   "skills/meko-mcp-tools/SKILL.md",
   "skills/meko-mcp-tools-desktop/SKILL.md",
+  "skills/meko-select-datapack/SKILL.md",
+  "skills/meko-select-datapack-desktop/SKILL.md",
   "hooks/hooks.json",
   "hooks-handlers/lib/capture.js",
 ];

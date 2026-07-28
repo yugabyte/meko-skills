@@ -19,9 +19,11 @@ This page summarizes the public information Anthropic reviewers need for the Mek
 
 ## Privacy, Data Collection, and Retention
 
-The plugin connects Claude to the hosted Meko MCP endpoint at `https://mcp.mekodata.ai/mcp`. Meko stores only the data needed to provide memory, conversation history, knowledge-base search, and datapack management features requested by the user or configured by the installed hooks.
+The plugin connects Claude to the hosted Meko MCP endpoint at `https://mcp.mekodata.ai/mcp`. Its bundle contains four skills: two behavioral guides cover the 23 Cloud Meko tools for memory, conversation history, knowledge-base search, datapack management, artifacts, and token-usage tracking; two companion skills provide datapack-selection workflows for coding and Desktop clients.
 
-When the Claude Code plugin hooks are enabled, `SessionStart` creates a Meko conversation and `PreCompact`, `SessionEnd`, and the background checkpoint timer can send user prompts, assistant responses, tool-call summaries, tool-result summaries, and limited metadata such as working directory, git branch, session id, and timestamp to Meko using `conversation_add_message`. This is the automatic conversation-capture feature described in the README. Users who do not want automatic transcript capture should install only the root `skills/` files manually and not install the plugin hooks.
+When the Claude Code plugin hooks are enabled, `SessionStart` creates or resumes a Meko conversation and injects its `conversation_id`, project-derived `agent_id`, active datapack, and recalled memories. `PreCompact`, `SessionEnd`, and a non-interrupting background checkpoint timer (10 minutes by default) can send user prompts, assistant responses, tool-call summaries, tool-result summaries, and limited metadata such as working directory, git branch, session id, and timestamp to Meko using `conversation_add_message`. The Meko server extracts durable memories from successfully captured user turns. Users who do not want automatic transcript capture should install only the root `skills/` files manually and not install the plugin hooks.
+
+Claude Desktop has no lifecycle hooks. Its Desktop skill instead directs Claude to create a conversation and transparently post substantive turns with `conversation_add_message`; the companion selector stores the active datapack as a tagged Meko memory. Manual installation remains subject to model-driven skill activation.
 
 Meko privacy policy: [https://www.yugabyte.com/privacy-policy/](https://www.yugabyte.com/privacy-policy/)
 
@@ -72,9 +74,6 @@ Use these examples with the standard testing account after connecting the Meko M
 
    Expected behavior: Claude calls `memory_add`, then `memory_search`, and returns the stored canary fact. The reviewer may delete the test memory afterward with `memory_delete_by_id`.
 
-## Known Server-Side Follow-ups
+## Live-Service Review Dependencies
 
-The public packaging in this repo validates independently, but Connector Directory review also depends on the live MCP server. Current upstream follow-ups are tracked in:
-
-- Upstream server issue 140 — add required MCP tool annotations
-- Upstream server issue 141 — align `datapack_list` schema and runtime requirements
+The public packaging in this repo validates independently, but Connector Directory review also depends on the live MCP server, its OAuth configuration, tool annotations, and the review account's datapack grants. Reviewers should treat the deployed schemas and authorization responses as the source of truth.

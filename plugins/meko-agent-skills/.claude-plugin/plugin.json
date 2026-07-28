@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "meko-agent-skills",
-  "version": "2.1.0",
-  "description": "Meko MCP tools for memory, conversations, knowledge base, and datapacks.",
+  "version": "2.1.1",
+  "description": "Meko skills for 23 MCP tools, automatic capture, and datapack selection.",
   "author": {
     "name": "Meko",
     "email": "info@yugabyte.com"

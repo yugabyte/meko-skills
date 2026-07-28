@@ -16,13 +16,13 @@ specific language governing permissions and limitations under the License.
 
 Every tool example below shows the correct parameters, expected response, and common errors.
 
-> **Note on `agent_id` in the examples below.** The string `"agent"` appears in these examples as a placeholder shorthand; it is NOT a required constant. Substitute **your** client's value: for Claude Desktop, use `claude_desktop`; for Claude Code/Cursor, use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). Write genuinely cross-project facts with `agent_id="meko_agent"`. On memory reads, `agent_id` attributes the trace but does not filter results. See `tools-agent-id-conventions.md`.
+> **Note on `agent_id` in the examples below.** The string `"agent"` appears in these examples as a placeholder shorthand; it is NOT a required constant. Substitute **your** client's bucket: for Claude Desktop, the bare client name `claude_desktop`; for Claude Code/Cursor, `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). For genuinely cross-project facts (user identity, global preferences) write/read with `agent_id="meko_agent"` — the common bucket the server stores empty/missing values into. See `tools-agent-id-conventions.md`.
 
 ---
 
 ## Memory Tools
 
-**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for normal attribution, or `meko_agent` when writing genuinely cross-project facts. Writes retain that attribution, while personal memory reads span all of this user's agents.
+**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for client-personal context, or `meko_agent` for genuinely cross-project facts (user identity, global preferences). Writes retain that value as provenance; `memory_search` and `memory_get_all` still return this user's memories across all agent IDs.
 
 ### memory_add
 

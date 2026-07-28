@@ -21,10 +21,10 @@ CONDITIONS OF ANY KIND, either express or implied. See the License for the
 specific language governing permissions and limitations under the License.
 -->
 
-## Skill name and maintainer
+## Skill name and author
 
-<!-- For existing skills: name + current maintainer (meko or community) -->
-<!-- For new skills: proposed name + set maintainer: community in your SKILL.md -->
+<!-- For existing skills: name + current metadata.author value -->
+<!-- For new skills: proposed name + intended author or owning team -->
 
 ## What skill do you want to add or change?
 
