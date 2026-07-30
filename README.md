@@ -149,6 +149,10 @@ The full behavioral guide is in the SKILL.md files. The reference docs cover too
 - **Directory review notes**: [DIRECTORY_REVIEW.md](./DIRECTORY_REVIEW.md)
 - **Security reports**: [SECURITY.md](./SECURITY.md)
 
+## Privacy Policy
+
+The Meko connector, skills, and plugin hooks send data you choose to persist — memories, conversation turns, knowledge, and limited operational metadata — to the hosted Meko service at `https://mcp.mekodata.ai/mcp`. What is collected, how it is used and stored, when it is shared, how long it is retained, and how to reach us is described in the [Meko Connector and Skills Privacy Policy](https://github.com/yugabyte/meko-skills/blob/main/PRIVACY_POLICY.md). Yugabyte's corporate [Privacy Notice](https://www.yugabyte.com/privacy-policy/) additionally covers website and account data. Automatic conversation capture requires installing the plugin hooks; installing only the skill files means Meko stores data only on explicit tool calls.
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). The short version: open an issue first, then submit a PR with a test prompt that verifies your change works against a live MCP server.
