@@ -1,0 +1,20 @@
+code: mkb
+name: "Meko for BMad"
+description: "Recall relevant Meko experience during BMad workflows and publish finalized artifacts plus a concise learning summary to a Meko datapack."
+module_version: 1.0.0
+default_selected: false
+module_greeting: >
+  Meko for BMad is installed. Run the setup skill (MS) to verify BMad, detect the
+  Meko MCP connection, pick a datapack, and wire recall into your BMad workflows.
+  Recall is enabled after setup; artifact and summary publishing requires explicit
+  consent. If Meko is unavailable, BMad keeps working with its normal local workflow.
+
+meko_datapack_id:
+  prompt: "Meko datapack ID to use for recall and publishing (leave blank to select interactively during setup)."
+  default: ""
+  result: "{value}"
+
+meko_enable_publish:
+  prompt: "Enable publishing of finalized artifacts and a learning summary to Meko? (recall is always enabled)"
+  default: "false"
+  result: "{value}"

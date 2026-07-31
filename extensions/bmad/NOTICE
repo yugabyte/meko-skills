@@ -1,0 +1,25 @@
+meko-bmad
+Copyright © 2026 YugabyteDB, Inc. All Rights Reserved.
+
+This product is licensed to you under the Apache License, Version 2.0
+(the "License"). You may not use this product except in compliance with
+the Apache License.
+
+This product may include a number of subcomponents with separate copyright
+notices and license terms. Your use of these subcomponents is subject to
+the terms and conditions of the subcomponent's license, as noted in the
+LICENSE file.
+
+This directory contains the Meko integration module for the BMad Method —
+agent skills that add recall, artifact publishing, and a durable improvement
+loop to BMad workflows via the Meko platform (https://mekodata.ai).
+
+Meko is a product of YugabyteDB, Inc. (https://yugabyte.com).
+
+Third-party content:
+  - The Agent Skills standard (https://agentskills.io) is referenced for
+    SKILL.md file format compatibility.
+  - The BMad Method (https://docs.bmad-method.org) is an independent project;
+    it is owned by its respective authors and is not affiliated with or
+    endorsed by YugabyteDB, Inc. This module integrates with BMad's documented
+    custom-module and customization-hook interfaces.

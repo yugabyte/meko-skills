@@ -34,6 +34,12 @@ const ALLOWED_HOSTS = new Set([
   "apache.org",
   "www.apache.org",
   "agentskills.io",
+  // BMad Method docs — referenced by the extensions/bmad module.
+  "docs.bmad-method.org",
+  "bmad-builder-docs.bmad-method.org",
+  // Standards referenced by the extensions/bmad CHANGELOG.
+  "keepachangelog.com",
+  "semver.org",
   "discord.gg",
   "json.schemastore.org",
   "support.claude.com",
