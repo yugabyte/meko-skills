@@ -1,7 +1,7 @@
 code: mkb
 name: "Meko for BMad"
 description: "Recall relevant Meko experience during BMad workflows and publish finalized artifacts plus a concise learning summary to a Meko datapack."
-module_version: 1.0.0
+module_version: 0.1.0
 default_selected: false
 module_greeting: >
   Meko for BMad is installed. Run the setup skill (MS) to verify BMad, detect the

@@ -11,7 +11,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.0.0"
+  version: "0.1.0"
   tags: meko, bmad, publish, artifact, memory
 ---
 <!--
