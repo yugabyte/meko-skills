@@ -17,8 +17,11 @@ specific language governing permissions and limitations under the License.
 
 ## `module-help.csv` (13 columns)
 
-The project help file at `{project-root}/_bmad/module-help.csv` has exactly 13
-columns, in this order:
+This module's help file is installed at
+`{project-root}/_bmad/mkb/module-help.csv`; BMad aggregates every module's rows
+into the read-only catalog `{project-root}/_bmad/_config/bmad-help.csv`. There is
+no `{project-root}/_bmad/module-help.csv` in BMad 6.10+. Both files have exactly
+13 columns, in this order:
 
 ```
 module,skill,display-name,menu-code,description,action,args,phase,preceded-by,followed-by,required,output-location,outputs
@@ -31,9 +34,11 @@ values are `MS`, `MR`, `MP`.
 
 ### Anti-zombie merge
 
-To register or re-register rows without leaving stale ("zombie") rows behind:
+The module install normally registers these rows for you; this merge is a repair
+path for a missing or stale `_bmad/mkb/module-help.csv`. To re-register rows
+without leaving stale ("zombie") rows behind:
 
-1. Read the project `module-help.csv`. Keep the header row.
+1. Read `_bmad/mkb/module-help.csv`. Keep the header row.
 2. Drop **every** row whose first column equals `Meko for BMad`.
 3. Append the three current `mkb` rows from `assets/module-help.csv`.
 4. Write the file back with the header and all other modules' rows preserved.
@@ -49,7 +54,10 @@ double quotes (see the shipped rows). Never reorder or drop columns.
 
 BMad resolves customization with precedence **defaults → team → personal**:
 
-- Shipped defaults: each workflow skill's `customize.toml`.
+- Shipped defaults: each workflow skill's own `customize.toml`, which lives in
+  the installed skill directory — for Claude Code,
+  `{project-root}/.claude/skills/<workflow-name>/customize.toml`. This is the
+  tree to scan when discovering `external_sources` / `external_handoffs`.
 - Team override: `{project-root}/_bmad/custom/<workflow-name>.toml` (committed).
 - Personal override: `{project-root}/_bmad/custom/<workflow-name>.user.toml`.
 
