@@ -92,17 +92,30 @@ override-file formats and the anti-zombie merge rules.
 3. **Select a datapack.** When Meko is active, use the `meko-select-datapack`
    skill. Auto-select when exactly one datapack exists; ask the user when
    several exist; warn and continue with recall-only if none exist.
-4. **Register help rows.** Merge the three `mkb` rows from
-   [assets/module-help.csv](assets/module-help.csv) into the project's
-   `{project-root}/_bmad/module-help.csv` using the anti-zombie pattern (delete
-   all rows whose first column is the module display name `Meko for BMad`, then
-   re-insert). This preserves the 13-column shape and other modules' rows.
-5. **Wire workflows by capability, not by a fixed list.** Scan installed BMad
-   `customize.toml` files under `{project-root}/_bmad/**`:
+4. **Verify help rows.** Installing the module already places the three `mkb`
+   rows from [assets/module-help.csv](assets/module-help.csv) at
+   `{project-root}/_bmad/mkb/module-help.csv`, and BMad aggregates them into
+   `{project-root}/_bmad/_config/bmad-help.csv`. Confirm three `Meko for BMad`
+   rows resolve there. Repair only when missing or stale, using the anti-zombie
+   pattern on `_bmad/mkb/module-help.csv` (delete all rows whose first column is
+   the module display name `Meko for BMad`, then re-insert). This preserves the
+   13-column shape and other modules' rows. There is no
+   `{project-root}/_bmad/module-help.csv` in BMad 6.10+ — never create one.
+5. **Wire workflows by capability, not by a fixed list.** Scan the
+   `customize.toml` files shipped beside the installed workflow skills — for
+   Claude Code, `{project-root}/.claude/skills/<skill-name>/customize.toml`.
+   They do **not** live under `{project-root}/_bmad/**`; scanning there matches
+   nothing and silently wires no workflows:
    - Wherever `[workflow]` exposes `external_sources`, append the **context
      directive** (recall).
    - Wherever `[workflow]` exposes `external_handoffs` **and** publishing was
      approved, append the **publishing directive**.
+
+   In a stock BMad 6.11 `bmm` install, `bmad-prd`, `bmad-architecture`,
+   `bmad-product-brief`, `bmad-ux`, `bmad-deep-recon`, and `bmad-project-context`
+   expose `external_sources`; the same set minus `bmad-project-context`, plus
+   `bmad-brainstorming`, exposes `external_handoffs`. Always scan rather than
+   trusting this list — it changes between BMad releases.
 
    Author sparse team overrides under `{project-root}/_bmad/custom/<workflow>.toml`
    via BMad's `bmad-customize` flow, preserving existing entries and verifying
@@ -127,8 +140,11 @@ canary can run. Report this as `restart_required`, not a failure.
 
 ## Uninstall
 
-- Remove only the three `mkb` rows from `module-help.csv` (anti-zombie delete by
-  module display name `Meko for BMad`).
+- Leave the help rows to BMad's module lifecycle — they live in
+  `_bmad/mkb/module-help.csv` and the aggregated `_bmad/_config/bmad-help.csv`,
+  both owned by the `mkb` module install. Only when the user keeps `mkb`
+  installed but wants the rows gone, anti-zombie delete rows whose first column
+  is `Meko for BMad` from `_bmad/mkb/module-help.csv`.
 - Remove only the exact Meko-managed directive entries from the
   `external_sources` / `external_handoffs` arrays in
   `{project-root}/_bmad/custom/*.toml`, leaving all other entries intact. If an

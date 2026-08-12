@@ -41,11 +41,18 @@ Full first-time wiring.
 5. **Select datapack.** With Meko active, invoke `meko-select-datapack`.
    One datapack → auto-select. Several → ask. None → warn and proceed with
    recall-only (publishing cannot be enabled without a datapack).
-6. **Register help rows.** Merge the three `mkb` rows into
-   `{project-root}/_bmad/module-help.csv` per the anti-zombie rule in
-   [reference.md](reference.md). Preserve the header and all non-`mkb` rows.
-7. **Scan and wire workflows.** Enumerate `customize.toml` files under
-   `{project-root}/_bmad/**`. For each with a `[workflow]` table:
+6. **Verify help rows.** The BMad installer already copies this module's rows to
+   `{project-root}/_bmad/mkb/module-help.csv` and aggregates them into
+   `{project-root}/_bmad/_config/bmad-help.csv`. Confirm three `Meko for BMad`
+   rows resolve in the aggregate catalog. Only if they are missing or stale,
+   repair `_bmad/mkb/module-help.csv` per the anti-zombie rule in
+   [reference.md](reference.md). Do not create `_bmad/module-help.csv` — that
+   path does not exist in BMad 6.10+.
+7. **Scan and wire workflows.** Enumerate `customize.toml` files in the installed
+   skill trees — for Claude Code that is
+   `{project-root}/.claude/skills/<skill-name>/customize.toml`. These live with
+   the skills, **not** under `{project-root}/_bmad/**`; scanning `_bmad` finds
+   nothing and silently wires no workflows. For each with a `[workflow]` table:
    - `external_sources` present → append the context directive.
    - `external_handoffs` present **and** publishing approved → append the
      publishing directive.
@@ -74,15 +81,19 @@ Read-only. Report, without modifying anything:
 
 - BMad version and whether it is in the supported range.
 - Whether Meko MCP is connected and the active datapack (name + id).
-- Which `mkb` help rows are present in `module-help.csv`.
+- Which `mkb` help rows resolve in `_bmad/_config/bmad-help.csv`.
 - Which workflows carry the Meko context directive and which carry the
   publishing directive.
 - Whether a `restart_required` follow-up is pending.
 
 ## `uninstall`
 
-1. Remove the three `mkb` rows from `module-help.csv` (anti-zombie delete by the
-   module display name `Meko for BMad`); leave the header and other rows.
+1. Leave `_bmad/mkb/module-help.csv` and the aggregated
+   `_bmad/_config/bmad-help.csv` to BMad — the module's help rows are installed
+   and removed by BMad's own module lifecycle. Only if the user is keeping the
+   `mkb` module installed but wants the rows gone, anti-zombie delete rows whose
+   first column is `Meko for BMad` from `_bmad/mkb/module-help.csv`, preserving
+   the header and other rows.
 2. In every `{project-root}/_bmad/custom/*.toml`, remove only the exact
    Meko-managed entries from `external_sources` / `external_handoffs`. Leave all
    other array entries and tables untouched.
