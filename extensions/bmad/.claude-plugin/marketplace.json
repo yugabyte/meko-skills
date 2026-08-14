@@ -1,0 +1,28 @@
+{
+  "name": "meko-bmad",
+  "owner": {
+    "name": "Meko",
+    "email": "info@yugabyte.com"
+  },
+  "metadata": {
+    "description": "Meko integration module for the BMad Method — recall, artifact publishing, and a durable improvement loop for BMad workflows.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "meko-bmad",
+      "source": "./",
+      "description": "Meko for BMad: recall relevant experience during BMad workflows and publish finalized artifacts plus a concise learning summary to a Meko datapack.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Meko",
+        "email": "info@yugabyte.com"
+      },
+      "skills": [
+        "./skills/meko-bmad-setup",
+        "./skills/meko-bmad-context",
+        "./skills/meko-bmad-publish"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+# verify-bmad-extension — path-filtered gate for the Meko for BMad module.
+#
+# Runs only when extensions/bmad/** changes, and validates ONLY that tree. It is
+# deliberately separate from verify-publish.yml so the connector-submission
+# pipeline (root skills/, .claude-plugin/, plugins/meko-agent-skills/) is never
+# coupled to this module. Nothing here auto-merges.
+
+name: verify-bmad-extension
+
+on:
+  pull_request:
+    paths:
+      - "extensions/bmad/**"
+      - ".github/workflows/verify-bmad-extension.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Validate extension (frontmatter, headers, links, manifest, module files)
+        run: node extensions/bmad/scripts/verify-extension.mjs
+
+      - name: Secret scan (gitleaks)
+        run: |
+          VER=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          CFG=""
+          [ -f .gitleaks.toml ] && CFG="--config .gitleaks.toml"
+          /tmp/gitleaks dir extensions/bmad $CFG --no-banner --redact
+
+      - name: Prompt-injection lint
+        run: |
+          if [ -f scripts/prompt-injection-lint.mjs ]; then
+            node scripts/prompt-injection-lint.mjs extensions/bmad
+          else
+            echo "::warning::prompt-injection-lint.mjs not present; extension validator still ran"
+          fi
+
+      - name: Validate plugin manifest
+        run: npx -y @anthropic-ai/claude-code plugin validate extensions/bmad --strict

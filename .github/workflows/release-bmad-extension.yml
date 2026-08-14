@@ -1,0 +1,72 @@
+# release-bmad-extension — cut a GitHub Release for the Meko for BMad module.
+#
+# Triggered by pushing a tag of the form meko-bmad-vX.Y.Z. It validates that the
+# tag version matches the module's marketplace manifest, archives ONLY
+# extensions/bmad/, emits a checksum, and creates a GitHub Release. It never
+# touches the root marketplace or the plugins/meko-agent-skills connector bundle.
+
+name: release-bmad-extension
+
+on:
+  push:
+    tags:
+      - "meko-bmad-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (meko-bmad-vX.Y.Z)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Resolve tag and version
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          case "$TAG" in
+            meko-bmad-v*) : ;;
+            *) echo "::error::tag '$TAG' is not of the form meko-bmad-vX.Y.Z"; exit 1 ;;
+          esac
+          VERSION="${TAG#meko-bmad-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate the extension
+        run: node extensions/bmad/scripts/verify-extension.mjs
+
+      - name: Assert tag matches manifest version
+        run: |
+          MANIFEST_VERSION="$(node -e "console.log(require('./extensions/bmad/.claude-plugin/marketplace.json').metadata.version)")"
+          if [ "$MANIFEST_VERSION" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::tag version ${{ steps.ver.outputs.version }} != manifest version $MANIFEST_VERSION"
+            exit 1
+          fi
+          echo "manifest version $MANIFEST_VERSION matches tag"
+
+      - name: Archive extensions/bmad only
+        run: |
+          ARCHIVE="meko-bmad-${{ steps.ver.outputs.version }}.tar.gz"
+          tar -czf "$ARCHIVE" -C extensions bmad
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            "$ARCHIVE" "$ARCHIVE.sha256" \
+            --title "Meko for BMad ${{ steps.ver.outputs.version }}" \
+            --notes "Meko integration module for the BMad Method. See extensions/bmad/CHANGELOG.md for details." \
+            --verify-tag
