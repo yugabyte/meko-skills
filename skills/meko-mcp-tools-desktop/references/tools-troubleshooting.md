@@ -21,7 +21,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 1. **Never retry the identical failed call more than once.** If it fails twice with the same error, it's not transient — diagnose the cause.
 2. **Distinguish transient vs persistent failures.** "Connection already closed" is transient (retry once). "Permission denied" is persistent (stop, don't retry).
 3. **Don't guess parameters sequentially.** If a tool fails with one parameter format, don't try 4 variations. Check this skill's docs for the correct format first.
-4. **Use your session's `agent_id` consistently.** For Claude Desktop the default is `claude_desktop`; coding clients use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). The value attributes writes and traces, while personal memory reads span all of this user's agent IDs.
+4. **Use your session's `agent_id` consistently on writes.** For Claude Desktop the default is `claude_desktop`; use `meko_agent` when writing cross-project facts. Other clients use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). Memory reads and `conversation_list` span all of this user's agents regardless of the value passed; `conversation_get` requires the creating agent's exact value.
 
 ---
 
@@ -40,14 +40,6 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 
 ---
 
-## Legacy scope parameter errors
-
-**Error:** `Insufficient scope: 'all'. This tool requires 'read' or higher.`
-
-Current Cloud Meko tool schemas do not expose a `scope` argument. This error indicates a stale client or legacy deployment. Refresh the MCP tool catalog and omit `scope`; if the server still requires it, follow that deployment's published schema rather than guessing values.
-
----
-
 ## agent_id errors
 
 On the Cloud multi-tenant schema, `agent_id` is a TEXT column value — not a PostgreSQL identifier — so arbitrary strings are accepted.
@@ -62,7 +54,7 @@ Fix: always pass a concrete non-empty `agent_id`. For Claude Desktop use `agent_
 
 ### "My reads return fewer results than I expected"
 
-`memory_search` and `memory_get_all` are scoped by datapack and user, not by `agent_id`. One call returns this user's rows across Desktop, coding clients, legacy IDs, and the `meko_agent` bucket. Do not fan out; if results are unexpectedly sparse, verify the active `datapack_id`, query wording, and user identity.
+`memory_search` and `memory_get_all` do not filter by `agent_id`: one call returns this user's memories across every agent. If results seem thin, check the `datapack_id`, confirm the write landed, and remember that mem0 extraction can be lossy. `conversation_get` is agent-owned and requires the exact creating `agent_id`; `conversation_list` is not agent-filtered.
 
 ### "I'm seeing rows tagged with legacy agent_id values"
 
@@ -74,7 +66,7 @@ Pre-existing data may be tagged `"agent"`, `"claude_code"`, `"cursor:<slug>"`, o
 
 | Tool | Safe to retry? | Why |
 |------|---------------|-----|
-| All `read` scope tools | Yes | Reads are idempotent |
+| All read-only tools | Yes | Reads are idempotent |
 | `memory_add` | Yes (once) | Mem0 has dedup logic |
 | `memory_update` | Yes (once) | Overwrites same ID |
 | `memory_delete_by_id` | Yes | Deleting already-deleted is a no-op |

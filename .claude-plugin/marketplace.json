@@ -6,12 +6,12 @@
   },
   "metadata": {
     "description": "Agent skills for the Meko data platform",
-    "version": "2.1.1"
+    "version": "2.2.0"
   },
   "plugins": [
     {
       "name": "meko-agent-skills",
-      "description": "Meko skills for 23 MCP tools, automatic capture, and datapack selection.",
+      "description": "Meko skills for memory, knowledge, conversation capture, and datapack selection.",
       "source": "./plugins/meko-agent-skills"
     }
   ]

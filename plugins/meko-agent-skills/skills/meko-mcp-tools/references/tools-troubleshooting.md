@@ -21,7 +21,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 1. **Never retry the identical failed call more than once.** If it fails twice with the same error, it's not transient — diagnose the cause.
 2. **Distinguish transient vs persistent failures.** "Connection already closed" is transient (retry once). "Permission denied" is persistent (stop, don't retry).
 3. **Don't guess parameters sequentially.** If a tool fails with one parameter format, don't try 4 variations. Check this skill's docs for the correct format first.
-4. **Use your session's `agent_id` consistently on writes.** Pass the value the SessionStart hook injected (e.g. `claude_code:<repo-basename>` for Claude Code; `claude_desktop` for Claude Desktop) on every write so rows are attributed correctly, and on `conversation_get` (which *does* enforce it — conversations are owned by the `agent_id` that created them; a wrong value returns `agent_id_mismatch`). Memory reads (`memory_search`/`memory_get_all`) and `conversation_list` are not affected — they return all your agents' rows for this user regardless of the `agent_id` passed. Don't switch write forms mid-session.
+4. **Use your session's `agent_id` consistently on writes** (the SessionStart-injected value), and on `conversation_get` — conversations are owned by the creating `agent_id`; a wrong value returns `agent_id_mismatch`. Memory reads and `conversation_list` are unaffected by `agent_id`. Don't switch write forms mid-session.
 
 ---
 
@@ -40,11 +40,24 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 
 ---
 
-## Legacy scope parameter errors
+## An error payload is a FAILED search, never an empty one
 
-**Error:** `Insufficient scope: 'all'. This tool requires 'read' or higher.`
+Quota errors, rate-limit errors, and tool refusals come back as an error object with **no `results` key** — reading `response.get("results", [])` first silently converts "you were refused" into "the store is empty." Follow SKILL.md operating contract 1: report it as "search failed: `<error code>` — findings unknown," never as "no results."
 
-Current Cloud Meko tool schemas do not expose a `scope` argument. This error indicates a stale client or legacy deployment. Refresh the MCP tool catalog and omit `scope`; if the server still requires it, follow that deployment's published schema rather than guessing values.
+---
+
+## Rate limiting: `PAT_RATE_LIMITED`
+
+Bursts of requests on one token return:
+
+```json
+{"error": "PAT_RATE_LIMITED", "detail": "too many requests for this token; retry after 60s"}
+```
+
+- Throttling is **endpoint-specific**: `artifact_put` bursts and high-concurrency `memory_get_all` trigger it readily; `memory_search` tolerates far more. Do not assume one safe concurrency level for every tool.
+- A rate-limited `artifact_put` returns this error **instead of** a `content_hash` — checking only for the hash misreads throttling as silent write loss.
+- Honor the retry-after (~60s) or back off exponentially; pace sustained work. Retry only idempotent operations or hash-protected writes.
+- Distinct from the lifetime quota error (`free_tier_limit_reached`) — waiting never recovers that one.
 
 ---
 
@@ -74,7 +87,7 @@ Pre-existing data may be tagged `"agent"`, `"claude_code"`, `"cursor:<slug>"`, o
 
 | Tool | Safe to retry? | Why |
 |------|---------------|-----|
-| All `read` scope tools | Yes | Reads are idempotent |
+| All read-only tools | Yes | Reads are idempotent |
 | `memory_add` | Yes (once) | Mem0 has dedup logic |
 | `memory_update` | Yes (once) | Overwrites same ID |
 | `memory_delete_by_id` | Yes | Deleting already-deleted is a no-op |

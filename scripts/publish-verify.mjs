@@ -133,8 +133,8 @@ if (!existsSync(marketplacePath)) {
 } else {
   const marketplace = readJson(marketplacePath, ".claude-plugin/marketplace.json");
   // Claude Code currently ignores pluginRoot during installation even though
-  // the validator accepts it (anthropics/claude-code#61224). Keep the full
-  // source path so marketplace installs resolve the bundled plugin correctly.
+  // the validator accepts it. The courier strips that unsupported hint and
+  // publishes an explicit repo-root-relative plugin source instead.
   if (marketplace?.metadata?.pluginRoot !== undefined) {
     errors.push("marketplace metadata.pluginRoot is unsupported and must be omitted");
   }

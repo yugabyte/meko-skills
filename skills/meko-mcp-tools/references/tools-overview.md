@@ -14,20 +14,21 @@ specific language governing permissions and limitations under the License.
 -->
 # Complete Tool Catalog and Decision Tree
 
-**23 tools on Cloud Meko** (verified against `https://mcp.mekodata.ai/mcp`). Grouped: Memory (8), Conversation (6), Knowledge Base (1), Datapack (5), Artifacts (2), Observability (1).
+**23 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Memory (8), Conversation (6), Knowledge Base (1), Datapack (5), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
 
 ## Quick health check before using tools
 
 Before starting a session, verify that the Meko MCP tools are working:
 
 1. `memory_search(query="test", agent_id="<your-session-agent-id>", conversation_id="<session-conversation-id>")` — Confirms memory subsystem is up. Use the `agent_id` and `conversation_id` from the SessionStart `additionalContext`. May fail with "connection already closed" — see `tools-troubleshooting.md`.
-2. `datapack_list()` — Confirms Meko API connectivity. Returns the datapacks your token has access to.
+2. `datapack_list(conversation_id="<session-conversation-id>")` — Confirms Meko API connectivity. Returns the datapacks your token has access to.
 
 ## Decision tree: which tool do I need?
 
 ```
 User wants to...
-├── Search a knowledge base? ---------------> knowledgebase_search (read)
+├── Search personal context? ---------------> memory_search (read)
+├── Search shared datapack knowledge? ------> knowledgebase_search (read)
 ├── Add documents to a knowledge base? -----> point user at Meko UI: Datapack → Actions → Add Knowledge
 │                                              (no MCP tool — Cloud uses UI ingestion only)
 ├── Store or recall information?
@@ -56,13 +57,13 @@ Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typi
 | Tool | Purpose |
 |------|---------|
 | `memory_add(text, agent_id, conversation_id, run_id=None, metadata=None, messages=None, datapack_id=None)` | Store fact/preference/entity as long-term memory |
-| `memory_search(query, agent_id, conversation_id="", limit=10, datapack_id=None)` | Semantic search across memories + graph relations. `conversation_id` optional (omit or pass `""` for cross-conversation discovery). |
+| `memory_search(query, agent_id, conversation_id="", limit=10, datapack_id=None)` | Hybrid search across memories (semantic + keyword + entity boost). `conversation_id` optional (omit or pass `""` for cross-conversation discovery). |
 | `memory_get_by_id(memory_id, agent_id, conversation_id, datapack_id=None)` | Direct pgvector row lookup by UUID. Preferred over `memory_search` for exact-id verification. |
 | `memory_get_all(agent_id, conversation_id, run_id=None, datapack_id=None)` | List all of the user's memories (every agent — `agent_id` does not filter) |
 | `memory_update(memory_id, text, agent_id, conversation_id, datapack_id=None)` | Overwrite memory text |
 | `memory_delete_by_id(memory_id, agent_id, conversation_id, datapack_id=None)` | Delete a single memory |
 | `memory_delete_all(agent_id, conversation_id, run_id=None, datapack_id=None)` | Delete all memories for agent (destructive) |
-| `memory_promote(conversation_id, memory_ids, agent_id=None, datapack_id=None)` | Promote private memories into the datapack's shared knowledge base (moves them + graph context out of mem0, then evicts from mem0 — one-way). Owners/maintainers only; viewers/contributors get 403. |
+| `memory_promote(conversation_id, memory_ids, agent_id=None, datapack_id=None)` | Promote private memories into the datapack's shared knowledge base (moves them out of mem0, then evicts from mem0 — one-way). Owners/maintainers only; viewers/contributors get 403. |
 
 ## Conversation Tools (6)
 
@@ -80,9 +81,9 @@ Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typi
 | Tool | Purpose |
 |------|---------|
 | `datapack_create(name)` | Create new datapack |
-| `datapack_list()` | List all datapacks |
+| `datapack_list(conversation_id, datapack_id=None)` | List all datapacks. `conversation_id` is required for trace nesting; omit `datapack_id` to use the endpoint default. |
 | `datapack_describe(datapack_id, include_status=False)` | Describe datapack by UUID |
-| `datapack_update(datapack_id, name=None, description=None)` | Rename a datapack and/or update its description. Pass at least one of `name` / `description`. |
+| `datapack_update(datapack_id, name=None, description=None, conversation_search_opt_out=None)` | Rename a datapack, update its description, and/or opt out of (or back into) conversation-search caching. Pass at least one field. Opt-out is owner/maintainer only. |
 | `datapack_delete(datapack_id)` | Delete datapack by UUID (irreversible) |
 
 ## Artifact Tools (2)

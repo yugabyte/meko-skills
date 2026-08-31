@@ -18,8 +18,6 @@ This log records the live Claude Code sessions that drove the v1 → v2 design c
 
 The failure mode in v1 (session-keyed sidecar) is what motivated the v2 refactor to project-scoped (`agent_id`-keyed) pins. Re-read this log before proposing any change to `readDatapackPin` / `datapackPinSlug` / the SKILL.md persistence section — these failures are the reason those functions exist in their current shape.
 
-> Historical note: Round 1 intentionally shows obsolete output and failed v1 behavior. Use the current `SKILL.md` and cookbook—not the Round 1 transcript—as the format and API reference.
-
 ## Round 1 — v1 (session-keyed): FAIL
 
 **Date:** 2026-05-25
@@ -27,7 +25,7 @@ The failure mode in v1 (session-keyed sidecar) is what motivated the v2 refactor
 **Outcome:** Pin written to the wrong session; test session never received the injection.
 
 ### Setup
-- Plugin installed from an upstream development marketplace. Local edits had been synced into the active cache directory.
+- Plugin installed from GitHub marketplace `yugabyte/meko-mcp-server`. Local edits had been rsynced into the active cache dir.
 - Two Claude Code windows open simultaneously: a planning session (which built the skill) and a test session.
 - Two datapacks on the test account: `meko-local-setup` (`dd635fdd-8bd6-4ee9-9ae0-04b2c1f67dc1`) and `meko_default_datapack` (`c038ba7b-b78a-4e09-890c-7b4154021a2e`).
 

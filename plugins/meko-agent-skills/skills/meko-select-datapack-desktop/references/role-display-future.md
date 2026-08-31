@@ -48,7 +48,7 @@ These aren't in the spec column set. Don't add them silently. If the user asks f
 
 ## Sharing UI vs API state
 
-The Cloud console's **Share datapack** page shows "Coming Soon" overlays on a few specific actions, such as invite-by-email link sharing and transfer of ownership. Those overlays apply to those UI affordances, not to the underlying `grant` model. Contributor, maintainer, and viewer grants remain valid response values.
+The Cloud console "Share <datapack>" page (`meko_ui/src/features/datapacks/pages/DatapackSharePage.tsx`) shows interactive controls with "Coming Soon" overlays on a few specific actions (e.g. invite-by-email link sharing, transfer-ownership). Those overlays mean *those specific UI affordances* aren't shipped — NOT that the underlying `grant`/sharing model is absent. Contributor/maintainer/viewer grants are functional in the data layer today; only the user-facing self-serve invite flow is gated.
 
 ## Why the skill ships without Mine / Shared / All filter tabs
 

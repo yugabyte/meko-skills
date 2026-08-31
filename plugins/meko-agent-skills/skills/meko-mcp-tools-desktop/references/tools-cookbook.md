@@ -16,13 +16,13 @@ specific language governing permissions and limitations under the License.
 
 Every tool example below shows the correct parameters, expected response, and common errors.
 
-> **Note on `agent_id` in the examples below.** The string `"agent"` appears in these examples as a placeholder shorthand; it is NOT a required constant. Substitute **your** client's bucket: for Claude Desktop, the bare client name `claude_desktop`; for Claude Code/Cursor, `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). For genuinely cross-project facts (user identity, global preferences) write/read with `agent_id="meko_agent"` — the common bucket the server stores empty/missing values into. See `tools-agent-id-conventions.md`.
+> **Note on `agent_id` in the examples below.** The string `"agent"` appears in these examples as a placeholder shorthand; it is NOT a required constant. Substitute **your** client's value: for Claude Desktop, use `claude_desktop`; for Claude Code/Cursor, use `<client>:<repo-basename>` (e.g. `claude_code:meko-mcp-server`). Write genuinely cross-project facts with `agent_id="meko_agent"`. On memory reads, `agent_id` attributes the trace but does not filter results. See `tools-agent-id-conventions.md`.
 
 ---
 
 ## Memory Tools
 
-**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for client-personal context, or `meko_agent` for genuinely cross-project facts (user identity, global preferences). Writes retain that value as provenance; `memory_search` and `memory_get_all` still return this user's memories across all agent IDs.
+**Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for normal attribution, or `meko_agent` when writing genuinely cross-project facts. Writes retain that attribution, while personal memory reads span all of this user's agents.
 
 ### memory_add
 
@@ -59,6 +59,8 @@ memory_add(agent_id="agent", user_id="amiram",
 **When to use:** Find relevant memories by meaning. Always try this before asking the user to repeat information.
 
 **Cross-conversation discovery.** `memory_search` returns hits across every stored conversation for the `(datapack_id, user_id)` pair, across all agents (the tool intentionally passes `meko_agent_id=None` to mem0, so the `agent_id` argument scopes the trace but does not filter results). When a hit references an interesting conversation, follow up with `conversation_list` to browse the associated threads and `conversation_get` to read a specific one — the memory hit's `meko_conversation_id` field is the id to fetch. Pass `run_id` on the search itself to narrow to a single conversation up front.
+
+**Relevance floor.** Vector-matched `results` below `MEMORY_SEARCH_MIN_SCORE` (mem0's cosine-similarity score, default `0.5`) are dropped as weak matches rather than returned. A query can come back with fewer results than `limit`, or an empty list, when nothing clears the bar; that means no sufficiently relevant memory, not a broken call.
 
 ```
 memory_search(query="What programming language does the team use?", agent_id="agent")
@@ -141,7 +143,7 @@ memory_promote(memory_ids=["mem-uuid-123", "mem-uuid-456"],
 {"inserted_ids": ["mem-uuid-123"], "updated_ids": ["mem-uuid-456"], "not_found_ids": []}
 ```
 
-Get exact UUIDs from the `id` field of `memory_search` / `memory_get_all` results; never use graph relation IDs. Before the call, show the user each exact memory and UUID, explain that promotion is team-visible, one-way, and evicts the private records, then obtain explicit confirmation for those candidates. Pass the active `conversation_id` and intended `agent_id` / `datapack_id`; on legacy schemas that expose `scope`, use `write`, not `admin`.
+Get exact UUIDs from the `id` field of `memory_search` / `memory_get_all` results; never pass any other identifier. Before the call, show the user each exact memory and UUID, explain that promotion is team-visible, one-way, and evicts the private records, then obtain explicit confirmation for those candidates. Pass the active `conversation_id` and intended `agent_id` / `datapack_id`; on legacy schemas that expose `scope`, use `write`, not `admin`.
 
 On 403, authentication, or permission failure, report the error and stop — do not escalate scope, change datapacks, or alter identity. After a successful call, `knowledgebase_search` may verify shared visibility, but it is not a rollback mechanism.
 
@@ -168,8 +170,6 @@ conversation_create(agent_id="agent", user_id="amiram",
 ### conversation_add_message
 
 **When to use:** Add a user/assistant exchange to an existing conversation. **All fields must be verbatim** — never summarize or rephrase.
-
-Leave `index_for_search` at its default (`False`). Conversation-cache embedding is currently a WorkbenchLM-only feature — the inference gateway opts in on its own turns; agent-harness conversations should not opt in.
 
 ```
 conversation_add_message(conversation_id="conv-uuid-123", agent_id="agent",
@@ -341,18 +341,19 @@ For large files use `local_path` to read the file. S3 URLs are never exposed.
 
 ```
 datapack_create(name="analytics_prod")
-datapack_list()  # returns datapack_id for each datapack
+datapack_list(conversation_id="<this conversation's id>")  # returns datapack_id for each datapack
 datapack_describe(datapack_id="<uuid>", include_status=True)
 ```
 
 ### datapack_update / datapack_delete
 
-`datapack_update` renames or edits a datapack's description. At least one of `name` / `description` must be provided (or the tool returns `nothing_to_update`). The server refuses to rename `meko_default_datapack` — the error is `"meko_default_datapack cannot be renamed"`. Passing `description=""` does NOT clear an existing description.
+`datapack_update` renames a datapack, edits its description, and/or opts it in/out of conversation-search embedding. At least one of `name` / `description` / `conversation_search_opt_out` must be provided (or the tool returns `nothing_to_update`). The server refuses to rename `meko_default_datapack` — the error is `"meko_default_datapack cannot be renamed"`. Passing `description=""` does NOT clear an existing description. `conversation_search_opt_out=True` stops future turns from being indexed and is restricted to the datapack's owner or a maintainer. This is best-effort, not a hard guarantee — a transient database error on the live embed path's opt-out check fails open, so a turn can occasionally still get embedded for an opted-out datapack.
 
 ```
 datapack_update(datapack_id="<uuid>", name="renamed-datapack")
 datapack_update(datapack_id="<uuid>", description="new description")
 datapack_update(datapack_id="<uuid>", name="x", description="y")
+datapack_update(datapack_id="<uuid>", conversation_search_opt_out=True)
 datapack_delete(datapack_id="<uuid>")  # Irreversible!
 ```
 

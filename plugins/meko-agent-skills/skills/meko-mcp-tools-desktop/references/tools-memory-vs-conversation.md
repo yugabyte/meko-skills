@@ -22,7 +22,7 @@ specific language governing permissions and limitations under the License.
 - A **preference**: "Customer budget is $50k"
 - An **entity relationship**: "Alice works at Acme Corp"
 
-Memory is backed by pgvector (semantic search) and Apache AGE (entity-relationship graph). It retrieves relevant facts by meaning, not by conversation order.
+Memory is backed by pgvector. Search is hybrid: semantic similarity, keyword matching, and a boost for memories that mention the entities named in your query (people, projects, tools). It retrieves relevant facts by meaning, not by conversation order.
 
 ```
 memory_add(agent_id="support_bot",
@@ -85,16 +85,16 @@ Agents on Cloud Meko have two distinct read surfaces. Pick the right one for the
 
 | Read path | What it returns | How to call |
 |---|---|---|
-| Your personal memories | Everything this user and any of their agents wrote, filtered by `(datapack_id, user_id)` rather than `agent_id` | `memory_search(agent_id="claude_desktop", query="...", ...)` — `agent_id` attributes the trace |
+| Your personal memories | Everything you and any of your agents wrote for this user, filtered by `(datapack_id, user_id)` and not by `agent_id` | `memory_search(agent_id="claude_desktop", query="...", ...)` — `agent_id` attributes the trace |
 | Team's shared knowledge | Promoted memories + uploaded documents, visible to every member of the datapack | `knowledgebase_search(agent_id="<anything>", datapack_id="<datapack UUID>", query="...")` — `agent_id` is ignored |
 
-One `memory_search` already spans this user's Desktop, coding-client, legacy, and common-bucket memories. Do not fan out across agent IDs.
+One `memory_search` already spans this user's memories across all agents; no per-agent fan-out is needed.
 
 ### How content gets into each surface
 
-- **Personal memories** — written by `memory_add`. `agent_id` records provenance, but reads are scoped per-user and span all of that user's agents.
+- **Personal memories** — written by `memory_add`. The `agent_id` records the writer but does not restrict reads; memories are scoped per-user, so any of that user's agents can read them and no other user can.
 - **Team-shared Shared Knowledge** — arrives two ways:
-  1. An agent calls `memory_promote` for exact, user-confirmed memory UUIDs, or the user promotes them from the Cloud UI's Learnings tab. Promotion moves the memories and graph context into shared knowledge, strips `user_id`, preserves originating `agent_id` as provenance, and evicts the private mem0 records.
+  1. An agent calls `memory_promote` for exact, user-confirmed memory UUIDs, or the user promotes them from the Cloud UI's Learnings tab. Promotion moves the memories into shared knowledge, strips `user_id`, preserves originating `agent_id` as provenance, and evicts the private mem0 records.
   2. The user uploads a file via Datapack → Actions → **Add Knowledge** in the Cloud UI. PDF/TXT/MD/JSON/MP4 up to 5MB each.
 
   Both show up in `knowledgebase_search`, tagged `metadata_filters.source: "memory"` vs other values so the agent can distinguish provenance in responses.
@@ -103,12 +103,14 @@ One `memory_search` already spans this user's Desktop, coding-client, legacy, an
 
 ### When the user asks "what do you know about X?"
 
-A full sweep is two calls (budget for it — each is 0.6-6 seconds):
+A full sweep is two calls (budget for it — each is 2-6 seconds):
 
 ```
-memory_search(agent_id="claude_desktop", query="X", conversation_id=..., ...)  # all this user's personal memories
+memory_search(agent_id="claude_desktop", query="X", conversation_id=..., ...)
 knowledgebase_search(agent_id="<anything>", datapack_id="<uuid>", query="X", conversation_id=..., ...)
 ```
+
+The single `memory_search` includes everything this user and their other agents wrote in the datapack.
 
 When you answer, be explicit about scope so the user knows why something is or isn't there:
 
@@ -163,18 +165,18 @@ This is more than just text — tool calls and results are critical context for 
 
 ### Seed-based deduplication
 
-`conversation_add_message` accepts an optional client-supplied `seed`. Give each posted turn a stable value such as `<conversation_id>:claude-desktop:<sequential_number>`. Reusing the same seed for a retry produces the same deterministic message ID. Desktop has no overlapping hook-based capture mechanisms, so keep the sequence locally within the conversation.
+Each message's seed is `<conversation_id>:<user_message_uuid>`. All three capture mechanisms generate the same seed for the same exchange, producing the same deterministic trace ID via `sha256(seed)[:16].hex()`. This means duplicate writes from overlapping captures are idempotent.
 
 ### When to manually store conversations
 
-The normal per-turn workflow already uses `conversation_create` + `conversation_add_message`. Give a conversation extra curation when:
+Automatic capture handles the raw exchange. You should still manually use `conversation_create` + `conversation_add_message` when:
 - The user explicitly asks to "save this conversation"
 - You want to add curated `reasoning` traces beyond raw tool calls
 - You want to store a selected subset of the conversation with a descriptive title
 
-### Session coordination
+### Watermark coordination
 
-Claude Desktop does not use the coding plugin's watermark files or checkpoint timer. Keep the `conversation_id` returned by `conversation_create` for the current chat, post each substantive turn once, and reuse a turn's seed only when retrying the same write.
+A shared watermark file at `~/.claude/meko-capture/<session-id>.watermark.json` tracks what has been saved. Both hooks and the agent's periodic checkpoint use this to avoid reprocessing already-captured exchanges.
 
 ## Observability: conversation_id IS the Langfuse trace ID
 
@@ -206,7 +208,7 @@ From real traces, not the docstring happy path:
 
 | Tool | Latency per call |
 |---|---|
-| `memory_add` | 12-21 seconds (calls OpenAI for extraction, then writes to vector + graph) |
+| `memory_add` | 12-21 seconds (calls OpenAI for extraction, then writes to the vector store) |
 | `memory_search` | 1.8-5.9 seconds |
 | `knowledgebase_search` | 0.6 seconds (empty index; will grow with index size) |
 | `conversation_add_message` | 0.11 seconds (fire-and-forget; queued to Langfuse) |
@@ -220,4 +222,4 @@ If a user reports "my memory_add didn't seem to save", open the Observe hub for 
 - A `Memory Add (Meko MCP)` span with `Create a new memory in Mem0` child → the call reached Mem0. The fact extractor may have returned `"results": []` (common on short or non-fact-shaped text; not a bug, but lossy).
 - No span at all → the call never reached the server. Likely a transport / auth / `conversation_id` mismatch issue.
 
-The mem0 extractor is lossy — it extracts atomic facts and graph triples, and may drop prose that doesn't look fact-shaped to it. Observed 2026-05-07: 2 of 5 `memory_add` calls returned `"results": []` and only the graph side landed. When preserving authoritative text matters, store it via `conversation_add_message` (verbatim in `input`/`output`/`reasoning`) — the conversation path preserves text without LLM re-extraction.
+The mem0 extractor is lossy — it extracts atomic facts and may drop prose that doesn't look fact-shaped to it. Observed 2026-05-07 (on the graph-era server): 2 of 5 `memory_add` calls returned `"results": []`. When preserving authoritative text matters, store it via `conversation_add_message` (verbatim in `input`/`output`/`reasoning`) — the conversation path preserves text without LLM re-extraction.
