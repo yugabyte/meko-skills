@@ -59,7 +59,9 @@ jobs:
       - name: Prompt-injection lint
         run: |
           if [ -f scripts/prompt-injection-lint.mjs ]; then
-            node scripts/prompt-injection-lint.mjs skills plugins .claude-plugin
+            # Include public-only content such as extensions/bmad, not just the
+            # paths owned by the source-repo courier.
+            node scripts/prompt-injection-lint.mjs .
           else
             echo "::warning::prompt-injection-lint.mjs not bundled; invariant check still ran"
           fi

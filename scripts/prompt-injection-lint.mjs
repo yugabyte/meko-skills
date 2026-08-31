@@ -33,11 +33,13 @@ const ALLOWED_HOSTS = new Set([
   "github.com",
   "apache.org",
   "www.apache.org",
+  // Canonical governance link in the public repo's Contributor Covenant.
+  "www.contributor-covenant.org",
   "agentskills.io",
-  // BMad Method docs — referenced by the extensions/bmad module.
+  // BMad Method docs — referenced by the public repo's extensions/bmad module.
   "docs.bmad-method.org",
   "bmad-builder-docs.bmad-method.org",
-  // Standards referenced by the extensions/bmad CHANGELOG.
+  // Standards referenced by the public repo's extensions/bmad CHANGELOG.
   "keepachangelog.com",
   "semver.org",
   "discord.gg",
@@ -57,7 +59,10 @@ const PHRASE_RULES = [
   { id: "you-are-now", re: /\byou\s+are\s+now\b/i },
   { id: "new-instructions", re: /\b(new|updated)\s+(system\s+)?instructions?\s*:/i },
   { id: "reveal-system-prompt", re: /(reveal|print|repeat|output)\s+(your\s+)?(system\s+prompt|instructions)/i },
-  { id: "developer-override", re: /\b(developer|admin|root)\s+mode\b/i },
+  {
+    id: "developer-override",
+    re: /\b(?:(?:enable|enter|activate|switch\s+(?:to|into))\s+(?:developer|admin|root)\s+mode|(?:developer|admin|root)\s+mode\s+(?:enabled|activated|override))\b/i,
+  },
   { id: "exfiltrate", re: /\b(exfiltrat|send\s+(all\s+)?(secrets|credentials|tokens|env))/i },
 ];
 

@@ -34,7 +34,7 @@ Use the field directly in the **Role** column:
 
 Do not invent values, do not normalize the casing, do not display `"Owner"` if the field says `"owner"`. The deployed schema is the source of truth.
 
-The deployed server may enrich the response beyond static client models. Do not infer the wire schema from an implementation struct; trust the actual `datapack_list` response.
+Note that the upstream Go source (`/Users/amiram.mizne/sandbox/GitHub/meko/api_server/internal/models/models.go`) does NOT declare `grant` on the `Datapack` struct — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
 ## Counts on the list response
 
@@ -44,7 +44,7 @@ If the user asks for counts, call `datapack_describe(datapack_id=...)` on the sp
 
 ## Sharing UI vs API state
 
-The Cloud console's **Share datapack** page shows "Coming Soon" overlays on a few specific actions, such as invite-by-email link sharing and transfer of ownership. Those overlays apply to those UI affordances, not to the underlying `grant` model. Contributor, maintainer, and viewer grants remain valid response values.
+The Cloud console "Share <datapack>" page (`meko_ui/src/features/datapacks/pages/DatapackSharePage.tsx`) shows interactive controls with "Coming Soon" overlays on a few specific actions (e.g. invite-by-email link sharing, transfer-ownership). Those overlays mean *those specific UI affordances* aren't shipped — NOT that the underlying `grant`/sharing model is absent. Contributor/maintainer/viewer grants are functional in the data layer today; only the user-facing self-serve invite flow is gated.
 
 ## Why the skill ships without Mine / Shared / All filter tabs
 

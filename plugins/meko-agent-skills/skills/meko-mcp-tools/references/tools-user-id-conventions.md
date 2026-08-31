@@ -89,6 +89,6 @@ Personal content crosses the `user_id` boundary through `memory_promote` or the 
 | `user_id` | The cognito account or end-user (for multi-user agents) | auto from cognito for single-human clients; explicit string for multi-user agents | Optional (server auto-fills from cognito context) |
 | `agent_id` | Which agent wrote / is reading | `"claude_code:<repo>"`, `"claude_desktop"`, `"cursor:<repo>"`, `"meko_agent"` (common bucket) | Optional (empty/missing → `meko_agent` server-side); pass the per-session value verbatim for project-scoped reads/writes. Ignored on `knowledgebase_search`. |
 | `app_id` | Optional application/product sub-scope | `"second_brain"`, `"helpdesk"` | Optional |
-| `run_id` | Optional specific execution run | `"run_20260507_001"` | Optional |
+| `run_id` | A conversation id, used as a read/delete filter against the row's `meko_conversation_id` | `"374c70f3b95745ac92724d98475cc2d6"` | Optional. On `memory_add` it is trace metadata only and does not scope the write — see `tools-agent-id-conventions.md`. |
 
 See `tools-agent-id-conventions.md` for the full `agent_id` model.

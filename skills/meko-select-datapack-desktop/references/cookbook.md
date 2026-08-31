@@ -16,8 +16,6 @@ specific language governing permissions and limitations under the License.
 
 Concrete transcripts of the four flows the skill supports on Claude Desktop.
 
-Each selection flow starts by calling `conversation_create(agent_id="claude_desktop", title="Claude Desktop datapack selection")`. The examples use its returned value as `<selection-conv-id>` for `datapack_list` and pin writes. After a pin changes, create a separate conversation in the selected datapack for normal capture.
-
 ## Flow 1 — First pin (no existing pin memory)
 
 **User:** `pin prod-research as my active datapack`
@@ -27,7 +25,7 @@ Each selection flow starts by calling `conversation_create(agent_id="claude_desk
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [empty]
 
-> datapack_list(conversation_id="<selection-conv-id>")
+> datapack_list(conversation_id="<conv-id>")
 [14 entries returned, filtering by "prod-research"]
 
 One match: `prod-research`. Pinning.
@@ -35,7 +33,7 @@ One match: `prod-research`. Pinning.
 > memory_add(
              text="meko_active_datapack=8b1c…f4a2 name=prod-research selected_at=2026-05-25T18:42:00Z",
              agent_id="claude_desktop",
-             conversation_id="<selection-conv-id>",
+             conversation_id="<conv-id>",
              metadata='{"type":"active-datapack-pin"}')
 [returns id=mem_abc123]
 
@@ -60,7 +58,7 @@ datapack_id flows through automatically.
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [returns id=mem_abc123, text="meko_active_datapack=8b1c…f4a2 name=prod-research …"]
 
-> datapack_list(conversation_id="<selection-conv-id>")
+> datapack_list(conversation_id="<conv-id>")
 [14 entries returned, filtering by "q2-roadmap-deck"]
 
 One match: `q2-roadmap-deck`. Switching pin.
@@ -69,7 +67,7 @@ One match: `q2-roadmap-deck`. Switching pin.
                 memory_id="mem_abc123",
                 text="meko_active_datapack=4c2e…a991 name=q2-roadmap-deck selected_at=2026-05-25T19:05:00Z",
                 agent_id="claude_desktop",
-                conversation_id="<selection-conv-id>")
+                conversation_id="<conv-id>")
 
 Switched pin from `prod-research` to `q2-roadmap-deck` (`4c2e…a991`).
 ```
@@ -85,7 +83,7 @@ The `memory_update` is critical here — using `memory_add` again would create a
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [empty]
 
-> datapack_list(conversation_id="<selection-conv-id>")
+> datapack_list(conversation_id="<conv-id>")
 [1 entry returned]
 
 Only one datapack: `meko-local-setup`. Auto-selecting.
@@ -93,7 +91,7 @@ Only one datapack: `meko-local-setup`. Auto-selecting.
 > memory_add(
              text="meko_active_datapack=a17d…cc91 name=meko-local-setup selected_at=…",
              agent_id="claude_desktop",
-             conversation_id="<selection-conv-id>",
+             conversation_id="<conv-id>",
              metadata='{"type":"active-datapack-pin"}')
 
 Pinned datapack `meko-local-setup` (`a17d…cc91`). Run this skill again with
@@ -112,7 +110,7 @@ Pinned datapack `meko-local-setup` (`a17d…cc91`). Run this skill again with
 > memory_delete_by_id(
                       memory_id="mem_abc123",
                       agent_id="claude_desktop",
-                      conversation_id="<selection-conv-id>")
+                      conversation_id="<conv-id>")
 
 Pin cleared. Subsequent Meko MCP calls will use the server default.
 ```

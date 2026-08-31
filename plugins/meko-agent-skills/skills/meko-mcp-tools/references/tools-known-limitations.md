@@ -16,6 +16,30 @@ specific language governing permissions and limitations under the License.
 
 These are current limitations of the Meko MCP tools. Know them upfront to avoid wasted tool calls.
 
+## Lifetime request quotas by tier
+
+`memory_search`, `knowledgebase_search`, and `memory_add` are quota-gated **per user, lifetime** — not per minute or per day. Default caps by plan:
+
+| Tier | memory_search | knowledgebase_search | memory_add |
+|---|---:|---:|---:|
+| Free | 1,000 | 1,000 | 10,000 |
+| Standard | 5,000 | 5,000 | 30,000 |
+| Pro / Enterprise | uncapped | uncapped | uncapped |
+
+When the cap is reached the tool returns an error object with code `free_tier_limit_reached` (on every tier; the `tier` field names the capped tier) and **no `results` key**.
+
+- **Do not retry** — the cap is lifetime.
+- **Budget searches**: polling, verify read-backs, and per-item sweeps all draw from one pool.
+- **Never report this error as "no results"** — it is a failed search; see `tools-troubleshooting.md`.
+
+## memory_get_all returns a fixed recent window — it has NO pagination
+
+One call returns roughly the **20 most recent rows**; the response's `total` reports the true count. Scoping arguments do not narrow the window, and paging parameters are rejected — there is no way to reach older rows through this tool. A second call with `promoted=true` returns the recent window of promoted rows, not the remaining personal rows; neither call alone nor the two together is a complete listing. Follow SKILL.md operating contract 2: state the gap when `total` exceeds rows returned, never claim a complete enumeration, and use `memory_search` or `memory_get_by_id` for anything specific.
+
+## run_id is a read/delete filter on the conversation id, not a write key
+
+`memory_search(run_id=<conversation_id>)` and the memory delete tools filter on the row's `meko_conversation_id`, so passing a conversation id there correctly scopes the call to that one conversation — a supported, reliable way to read a single conversation's memories (read/write/delete scoping was made consistent in MEKO-473/MEKO-474, #271). The one gotcha is on the write side: `memory_add`'s own `run_id` is Langfuse trace metadata only and is **not** persisted as the row's conversation id, so a row written with `memory_add(run_id=X)` is not findable via `memory_search(run_id=X)`. Scope writes with `conversation_id`, then filter the matching read by that same id.
+
 ## No delete tools for RAG artifacts
 
 There are no MCP tools to:
@@ -39,7 +63,7 @@ To **query** a built index, use `knowledgebase_search` — it returns both uploa
 `memory_add` passes text through Mem0's fact extraction pipeline. This works well for:
 - Facts: "Alice works at Acme Corp"
 - Preferences: "User prefers dark mode"
-- Entity relationships: "Amiram reports to Karthik"
+- Entity relationships: "Alice reports to Bob"
 
 It works **poorly** for:
 - CSV rows or tabular data — columns and rows get dropped

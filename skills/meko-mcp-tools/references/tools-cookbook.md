@@ -22,7 +22,7 @@ Every tool example below shows the correct parameters, expected response, and co
 
 ## Memory Tools
 
-**Critical:** Pass your session's `agent_id` on every memory *write* (the value from the SessionStart `additionalContext`, e.g. `claude_code:meko-mcp-server`) — it is stored on the row and rendered as the UI badge. Note that `agent_id` labels writes but does **not** filter personal reads: a single `memory_search` / `memory_get_all` returns all of your memories for this user across every `agent_id` (see the `memory_search` note below). For genuinely cross-project facts, write with `agent_id="meko_agent"` so the row lands in the common bucket.
+**Critical:** Pass your session's `agent_id` on every memory *write* (from the SessionStart `additionalContext`) — it is stored on the row as attribution. It does **not** filter reads: one `memory_search` / `memory_get_all` returns all of your memories across every `agent_id`. For cross-project facts, write with `agent_id="meko_agent"`.
 
 ### memory_add
 
@@ -36,12 +36,13 @@ memory_add(agent_id="<your-agent-id>",
 
 **Response:**
 ```json
-{"results": [{"id": "mem-uuid-123", "memory": "User Amiram is VP of Product at YugabyteDB. Prefers concise responses."}]}
+{"results": [{"id": "mem-uuid-123", "memory": "Deploy scripts must be run from the repo root, never a subdir."}]}
 ```
 
 **What NOT to store via memory_add:**
 - Full conversations (use `conversation_create` + `conversation_add_message`)
 - Large documents (use the UI's Datapack → Actions → Add Knowledge upload flow)
+- Multi-topic dumps (transcripts, mixed logs + decisions) — store **one coherent fact per memory**, with the identifiers a later search will use
 
 **Common errors:**
 - `syntax error at or near "-"` — legacy error from the pre-multi-tenancy schema when `agent_id` became part of a PostgreSQL identifier. No longer applies on Cloud (agent_id is a TEXT column value, any string is accepted). If you hit it on a deployment that still uses the old schema, use underscores instead of hyphens.
@@ -57,7 +58,9 @@ memory_add(agent_id="<your-agent-id>",
 memory_search(query="What programming language does the team use?", agent_id="agent", conversation_id="<uuid>")
 ```
 
-**Cross-conversation discovery.** `memory_search` returns hits across every stored conversation for the `(datapack_id, user_id)` pair, across all agents (the tool intentionally passes `meko_agent_id=None` to mem0, so the `agent_id` argument scopes the trace but does not filter results). When a hit references an interesting conversation, follow up with `conversation_list` to browse the associated threads and `conversation_get` to read a specific one — the memory hit's `meko_conversation_id` field is the id to fetch. Pass `run_id` on the search itself to narrow to a single conversation up front.
+**Cross-conversation discovery.** `memory_search` returns hits across every stored conversation for the `(datapack_id, user_id)` pair, across all agents (`agent_id` scopes the call's trace, not the results). When a hit references an interesting conversation, follow up with `conversation_list` to browse the associated threads and `conversation_get` to read a specific one — the memory hit's `meko_conversation_id` field is the id to fetch. For a deliberately cross-conversation search leave `run_id` off; to scope a search to a single conversation instead, pass `run_id=<conversation_id>` (it filters on `meko_conversation_id` — see `tools-known-limitations.md`).
+
+**Relevance floor.** Vector-matched `results` below `MEMORY_SEARCH_MIN_SCORE` (mem0's cosine-similarity score, default `0.5`) are dropped as weak matches rather than returned. A query can come back with fewer results than `limit`, or an empty list, when nothing clears the bar; that means no sufficiently relevant memory, not a broken call.
 
 **Response:**
 ```json
@@ -68,6 +71,8 @@ memory_search(query="What programming language does the team use?", agent_id="ag
 ```
 memory_search(query="user preferences", agent_id="agent", conversation_id="<uuid>", limit=5)
 ```
+
+**Evidence cap (SKILL.md operating contract 3): reason over at most ~10 results, no matter how many were retrieved or requested.** If asked to "use everything," still select the ~10 most relevant and say that you did.
 
 ---
 
@@ -131,9 +136,7 @@ memory_promote(memory_ids=["mem-uuid-123", "mem-uuid-456"],
 {"inserted_ids": ["mem-uuid-123"], "updated_ids": ["mem-uuid-456"], "not_found_ids": []}
 ```
 
-Get exact UUIDs from the `id` field of `memory_search` / `memory_get_all` results; never use graph relation IDs. Before the call, show the user each exact memory and UUID, explain that promotion is team-visible, one-way, and evicts the private records, then obtain explicit confirmation for those candidates. Pass the active `conversation_id` and intended `agent_id` / `datapack_id`; on legacy schemas that expose `scope`, use `write`, not `admin`.
-
-On 403, authentication, or permission failure, report the error and stop — do not escalate scope, change datapacks, or alter identity. After a successful call, `knowledgebase_search` may verify shared visibility, but it is not a rollback mechanism.
+Get exact UUIDs from the `id` field of `memory_search` / `memory_get_all` results (never any other identifier), and follow the confirmation checklist in SKILL.md before calling. On 403 or any auth failure, report and stop — never escalate scope, change datapacks, or alter identity.
 
 ---
 
@@ -158,8 +161,6 @@ conversation_create(agent_id="agent",
 ### conversation_add_message
 
 **When to use:** Add a user/assistant exchange to an existing conversation. **All fields must be verbatim** — never summarize or rephrase.
-
-Leave `index_for_search` at its default (`False`). Conversation-cache embedding is currently a WorkbenchLM-only feature — the inference gateway opts in on its own turns; agent-harness conversations should not opt in.
 
 ```
 conversation_add_message(conversation_id="conv-uuid-123", agent_id="agent",
@@ -239,7 +240,7 @@ knowledgebase_search(
 
 Unlike memory tools, `datapack_id` has no default — you must pass it explicitly.
 
-**Response (empty KB, verified 2026-05-07):**
+**Response (empty KB):**
 ```json
 {"results": [], "count": 0}
 ```
@@ -281,6 +282,7 @@ Save the `content_hash` — it's the retrieval key for `artifact_get`.
 **Common errors:**
 - `invalid_base64` — `content_base64` is not valid base64; decode the file before passing it.
 - `artifact_too_large` — file exceeds 5 MiB (default). Set `MEKO_MAX_ARTIFACT_UPLOAD_BYTES` to raise the limit.
+- `PAT_RATE_LIMITED` — burst uploads throttle; the error carries **no `content_hash`**, which mimics silent write loss. Pace bulk uploads, back off ~60s. The `content_hash` is the plain SHA-256 of the bytes — compute it locally and verify important artifacts with an `artifact_get` read-back.
 
 ---
 
@@ -335,20 +337,21 @@ For large files use the `local_path` value to read the file with normal file too
 
 ```
 datapack_create(name="analytics_prod")
-datapack_list()  # returns datapack_id for each datapack
+datapack_list(conversation_id="<session conversation id>")  # returns datapack_id for each datapack
 datapack_describe(datapack_id="<uuid>", include_status=True)
 ```
 
 ### datapack_update / datapack_delete
 
-`datapack_update` renames or edits the description of a datapack. Both `name` and `description` are optional; pass at least one. If both are omitted the tool returns `nothing_to_update` without hitting the API.
+`datapack_update` renames a datapack, edits its description, and/or opts it in/out of conversation-search embedding. `name`, `description`, and `conversation_search_opt_out` are all optional; pass at least one. If none are provided the tool returns `nothing_to_update` without hitting the API.
 
-The server refuses to rename the caller's `meko_default_datapack` — a rename call against that datapack returns `"meko_default_datapack cannot be renamed"`. Description edits on the default datapack are still allowed. Passing `description=""` does NOT clear an existing description; clearing is not supported via MCP.
+The server refuses to rename the caller's `meko_default_datapack` — a rename call against that datapack returns `"meko_default_datapack cannot be renamed"`. Description edits on the default datapack are still allowed. Passing `description=""` does NOT clear an existing description; clearing is not supported via MCP. Conversation-search embedding is on by default; `conversation_search_opt_out=True` stops future turns from being indexed (already-cached turns are unaffected) and is restricted to the datapack's owner or a maintainer. This is best-effort, not a hard guarantee — a transient database error on the live embed path's opt-out check fails open, so a turn can occasionally still get embedded for an opted-out datapack.
 
 ```
 datapack_update(datapack_id="<uuid>", name="renamed-datapack")
 datapack_update(datapack_id="<uuid>", description="new description")
 datapack_update(datapack_id="<uuid>", name="x", description="y")
+datapack_update(datapack_id="<uuid>", conversation_search_opt_out=True)
 datapack_delete(datapack_id="<uuid>")  # Irreversible!
 ```
 
