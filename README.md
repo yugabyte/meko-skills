@@ -117,7 +117,7 @@ The coding plugin ships `SessionStart`, `PreCompact`, and `SessionEnd` hooks plu
 
 ### Prerequisites
 
-You need a Meko account and an MCP server connection before installing a skill. If you haven't set that up yet:
+Register a Meko account and an MCP server connection before installing a skill. If you haven't set that up yet:
 
 1. **Sign up** at [mekodata.ai](https://mekodata.ai)
 2. **Connect your agent**: use the one-line installer from the portal or follow the [per-client integration guides](https://docs.mekodata.ai/integrations/connect-to-ai-agent/) (Claude Code, Claude Desktop, Cursor, Codex, Kiro, VS Code)
