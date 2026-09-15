@@ -1101,6 +1101,118 @@ function classifyPersistentCaptureFailure(err) {
 }
 
 /**
+ * Clear the failure fields once a drain has delivered everything it had.
+ *
+ * `failure_class` / `last_error` describe the LAST attempt, not outstanding
+ * work. The completion paths set delivery and zero the queue but left these
+ * set, and sessionHealthBucket() reports any session carrying a transient
+ * failure_class as degraded_retrying. So a single DNS blip marked a session
+ * degraded permanently, long after every turn had landed and the session had
+ * closed, which kept the capture banner red with an empty queue.
+ */
+/**
+ * Grace period before a closed session whose transcript has vanished is
+ * finalized. Default 1 day; MEKO_TRANSCRIPT_MISSING_GRACE overrides (seconds).
+ */
+function transcriptMissingGraceSeconds() {
+  const raw = process.env.MEKO_TRANSCRIPT_MISSING_GRACE;
+  const n = raw == null || raw === "" ? NaN : Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) && n >= 0 ? n : 86400;
+}
+
+function coerceQueued(state) {
+  const n = Number(state && state.queued_exchanges);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function clearResolvedFailure(state) {
+  state.failure_class = null;
+  state.last_error = null;
+  state.next_retry_at = null;
+  state.attempt_count = 0;
+  state.blocked_reason = null;
+  return state;
+}
+
+/**
+ * Detect a conversation the server no longer has.
+ *
+ * `conversation_add_message` answers `not_found` when its conversation id is
+ * gone: deleted server-side, expired, or created against a different Langfuse
+ * project than the one the current datapack resolves to. Unlike a network
+ * blip, this never heals. classifyFailure() has no pattern for it, so it falls
+ * through to the "transient" default and the outbox retries the same dead id
+ * forever: three sessions reached 609, 441 and 440 attempts holding 105 turns
+ * that could never land.
+ *
+ * Callers treat a match as a signal to open a fresh conversation and replay the
+ * queued turns into it (see recoverMissingConversation), which is the same
+ * recovery the ownership-rebucket path already performs.
+ *
+ * The `conversation` term is required as well as `not_found` so unrelated
+ * not-found errors (a missing memory row, a missing datapack) keep their own
+ * classification.
+ */
+function isMissingConversationError(err) {
+  const message = err && err.message ? String(err.message) : String(err || "");
+  const normalized = message.toLowerCase();
+  if (!/not[_\s-]?found/.test(normalized)) return false;
+  return /conversation/.test(normalized);
+}
+
+/**
+ * Recover from a conversation the server no longer has by opening a new one and
+ * repointing the watermark at it.
+ *
+ * rebucket() bumps conversation_epoch, resets the cursor to 0 and clears the
+ * failure fields, so the next drain replays the whole transcript into the fresh
+ * conversation. Nothing is dropped: the turns queued against the dead id are
+ * re-extracted from the transcript on disk. Replay is safe because every turn
+ * carries a deterministic `seed`, so the server dedupes anything that did land.
+ *
+ * On create failure the caller keeps its normal retry path, so a network blip
+ * here costs a retry rather than the queue.
+ *
+ * @returns {Promise<{ok: boolean, state?: object, convId?: string, error?: string}>}
+ */
+async function recoverMissingConversation({
+  state,
+  sessionId,
+  agentId,
+  transcriptPath,
+  datapackId = null,
+}) {
+  let newConvId = null;
+  try {
+    newConvId = await createConversation(
+      sessionId || "unknown",
+      agentId,
+      peekTranscriptMetadata(transcriptPath),
+      datapackId,
+    );
+  } catch (err) {
+    return { ok: false, error: `conversation_create failed: ${err.message}` };
+  }
+  if (!newConvId) {
+    return { ok: false, error: "conversation_create returned no ID" };
+  }
+  const rb = captureState.rebucket(state, newConvId);
+  if (!rb.ok) {
+    return { ok: false, error: rb.error || "rebucket failed" };
+  }
+  const next = rb.state;
+  // rebucket() parks delivery at "idle"; the transcript still holds the queued
+  // turns, so mark it pending and let the retry fire immediately.
+  next.delivery = "pending";
+  next.next_retry_at = null;
+  const written = captureState.writeState(sessionId, next);
+  if (!written.ok) {
+    return { ok: false, error: `failed to persist recovered conversation: ${written.error}` };
+  }
+  return { ok: true, state: written.state || next, convId: newConvId };
+}
+
+/**
  * Abort all pending MCP requests. Used by the preload timeout path so the
  * SessionStart hook can return promptly instead of waiting for a slow server
  * to finish responding.
@@ -2184,6 +2296,46 @@ async function drainSession(options) {
     }
 
     if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      // The transcript is the only source of turns, so a closed session whose
+      // transcript is gone has nothing left to deliver — ever. Left alone it
+      // sits at "pending" forever and holds the health rollup below healthy:
+      // 26 such tombstones had accumulated, the oldest 16.7 days old, none of
+      // them carrying a single deliverable turn.
+      //
+      // Only a session that is closing/closed AND has been idle past the grace
+      // period is finalized. An ACTIVE session whose transcript has not
+      // appeared yet must stay pending so it can still deliver, and the grace
+      // period covers a transcript that is briefly unreadable (an unmounted
+      // volume, a permissions blip) rather than genuinely gone.
+      const idleMs = state.last_activity_at
+        ? Date.now() - Date.parse(state.last_activity_at)
+        : 0;
+      const graceMs = transcriptMissingGraceSeconds() * 1000;
+      const finalizable =
+        (state.lifecycle === "closing" || state.lifecycle === "closed") &&
+        Number.isFinite(idleMs) &&
+        idleMs >= graceMs &&
+        coerceQueued(state) === 0;
+      if (stateExisted && finalizable) {
+        state.lifecycle = "closed";
+        state.delivery = "complete";
+        state.queued_exchanges = 0;
+        clearResolvedFailure(state);
+        captureState.writeState(sessionId, state);
+        process.stderr.write(
+          `[meko-capture] Finalizing ${sessionId}: transcript is gone and the session ` +
+          `closed ${Math.round(idleMs / 86400000)}d ago with nothing queued; ` +
+          `nothing left to deliver.\n`,
+        );
+        return makeDrainResult({
+          status: "noop",
+          session_id: sessionId,
+          last_line_number: state.last_line_number || 0,
+          lifecycle: state.lifecycle,
+          delivery: state.delivery,
+          error: "transcript missing; finalized",
+        });
+      }
       if (stateExisted) captureState.writeState(sessionId, state);
       return makeDrainResult({
         status: "noop",
@@ -2391,6 +2543,7 @@ async function drainSession(options) {
           state.lifecycle = "closed";
         }
         state.queued_exchanges = 0;
+        clearResolvedFailure(state);
       }
       state.agent_id = effectiveAgentId;
       state.agent_id_source = effectiveSource;
@@ -2487,6 +2640,41 @@ async function drainSession(options) {
         captured++;
         cursorAdvanced = true;
       } catch (err) {
+        // A conversation the server no longer has never heals, so retrying the
+        // same id burns attempts and strands every queued turn. Open a fresh
+        // conversation and replay into it instead. Return immediately rather
+        // than falling through to the post-loop cursor advance: the recovered
+        // state sits at cursor 0 with the turns still unsent, and advancing
+        // there would drop them.
+        if (isMissingConversationError(err)) {
+          const recovered = await recoverMissingConversation({
+            state,
+            sessionId,
+            agentId: effectiveAgentId,
+            transcriptPath,
+            datapackId: datapackPin && datapackPin.datapack_id,
+          });
+          if (recovered.ok) {
+            process.stderr.write(
+              `[meko-capture] Conversation ${convId} is gone server-side (${err.message}); ` +
+              `replaying ${allExchanges.length} queued exchange(s) into new conversation ` +
+              `${recovered.convId}.\n`,
+            );
+            return makeDrainResult({
+              status: "retry_wait",
+              session_id: sessionId,
+              captured,
+              queued_remaining: allExchanges.length - captured,
+              last_line_number: recovered.state.last_line_number || 0,
+              lifecycle: recovered.state.lifecycle,
+              delivery: recovered.state.delivery,
+            });
+          }
+          process.stderr.write(
+            `[meko-capture] Conversation ${convId} is gone server-side but recovery failed ` +
+            `(${recovered.error}); retrying.\n`,
+          );
+        }
         failed++;
         const persistent = classifyPersistentCaptureFailure(err);
         const failureClass = persistent
@@ -2527,6 +2715,7 @@ async function drainSession(options) {
         state.delivery = "idle";
         state.queued_exchanges = 0;
       }
+      clearResolvedFailure(state);
       captureState.writeState(sessionId, state);
       cursorAdvanced = captured > 0 || cursorAdvanced || synthesizedInterrupted;
     } else if (failed === 0 && allExchanges.length > maxBatch) {
@@ -2696,6 +2885,8 @@ module.exports = {
   buildExchanges,
   extractExchanges,
   addMessage,
+  isMissingConversationError,
+  recoverMissingConversation,
 };
 
 if (require.main === module) {

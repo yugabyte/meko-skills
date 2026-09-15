@@ -1467,6 +1467,18 @@ function sessionHealthBucket(entry) {
   ) {
     return "blocked_action_required";
   }
+  // A session that has delivered everything is healthy even if an earlier
+  // attempt failed: failure_class records the last attempt, not outstanding
+  // work. Without this, one transient blip pins a closed, fully drained
+  // session to degraded_retrying forever and the rollup reports degraded with
+  // an empty queue. Blocked classes are checked above and still win, since
+  // those need a human.
+  if (
+    (state.delivery === "complete" || state.delivery === "idle") &&
+    coerceNonNegInt(state.queued_exchanges, 0) === 0
+  ) {
+    return "healthy";
+  }
   if (
     state.delivery === "retry_wait" ||
     fc === "transient" ||
