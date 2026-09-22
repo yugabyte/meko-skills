@@ -862,6 +862,7 @@ function makeDrainResult(partial) {
     lifecycle: partial.lifecycle || "active",
     delivery: partial.delivery || "idle",
     next_retry_at: partial.next_retry_at || null,
+    dropped: partial.dropped || 0,
   };
 }
 
@@ -1055,24 +1056,57 @@ function parseMcpResponseBody(data) {
   return JSON.parse(payload);
 }
 
+/**
+ * Collapse a response body to a single-line snippet for error records.
+ * Display/persistence stays short; pattern matching uses the fuller body.
+ */
+function errorBodySnippet(err) {
+  const body = err && err.responseBody ? String(err.responseBody) : "";
+  return body.trim().replace(/\s+/g, " ").slice(0, 200);
+}
+
+/**
+ * Full collapsed response body for classifier pattern matching.
+ * mcpPost keeps up to 1000 chars on err.responseBody; the message snippet
+ * is only 200, so reasons past that window are only visible here.
+ */
+function errorBodyForMatch(err) {
+  const body = err && err.responseBody ? String(err.responseBody) : "";
+  return body.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Classify a capture failure that will not clear on retry.
+ *
+ * Returns null for transient failures. Otherwise:
+ *   { code, reason, scope, detail }
+ *
+ * `scope` says WHAT is rejected, which is what the caller needs to decide
+ * whether retrying can ever succeed:
+ *   - "account"  the account/plan is refusing all writes (quota, entitlement,
+ *                402). Every exchange would fail identically, so the caller
+ *                holds the queue: the block clears when billing does, and
+ *                dropping would lose the whole session.
+ *   - "exchange" the response looks like an edge proxy rejecting THIS
+ *                request's body (HTTP 403 with an HTML body — see #13). The
+ *                caller may skip one such exchange so later turns still
+ *                drain; a second consecutive exchange-scoped failure without
+ *                an intervening success is treated as request-wide and held,
+ *                because HTML 403 alone does not prove payload-specificity
+ *                (missing UA, IP/ASN, rate-limit pages share the shape).
+ *
+ * Body patterns are tested BEFORE the status code. An account-level rejection
+ * that arrives as 402/403 (the common case) would otherwise collapse into an
+ * opaque `http_403` and send the user off regenerating a token that was never
+ * at fault. `detail` is a short body snippet; `reason` is what callers persist
+ * into `last_error` / notices so the real cause survives.
+ */
 function classifyPersistentCaptureFailure(err) {
   const message = err && err.message ? String(err.message) : String(err || "");
-  const normalized = message.toLowerCase();
-  const statusCode = Number(err && err.statusCode);
-  const statusMatch = normalized.match(/\bmcp http (402|403)\b/);
-  let persistentStatus = null;
-  if (statusCode === 402 || statusCode === 403) {
-    persistentStatus = statusCode;
-  } else if (statusMatch) {
-    persistentStatus = Number(statusMatch[1]);
-  }
-
-  if (persistentStatus) {
-    return {
-      code: `http_${persistentStatus}`,
-      reason: `Meko rejected capture with HTTP ${persistentStatus}`,
-    };
-  }
+  const detail = errorBodySnippet(err);
+  // Search the fuller responseBody (up to mcpPost's 1000-char keep) so a
+  // reason that fell outside the 200-char message snippet is still matched.
+  const normalized = `${message} ${errorBodyForMatch(err)}`.toLowerCase();
 
   const persistentPatterns = [
     ["free_tier_limit_reached", /free[_\s-]?tier.*limit|free_tier_limit_reached/],
@@ -1082,6 +1116,13 @@ function classifyPersistentCaptureFailure(err) {
     ["payment_required", /payment[_\s-]?required/],
     ["subscription_required", /subscription[_\s-]?(required|inactive|expired)/],
     ["entitlement_denied", /entitlement.*(denied|required|missing)|(?:denied|required|missing).*entitlement/],
+    // MEKO-656/MEKO-691: _resolve_datapack_id now returns this code (instead
+    // of raising) when the caller has no ownership/share grant on the
+    // datapack_id it supplied. Account-scoped like entitlement_denied above —
+    // every write against that same datapack_id would fail identically until
+    // access is (re-)granted out of band, so the caller should hold rather
+    // than retry forever or silently drop the turn.
+    ["datapack_access_denied", /datapack_access_denied/],
   ];
   for (const [code, pattern] of persistentPatterns) {
     if (pattern.test(normalized)) {
@@ -1093,10 +1134,53 @@ function classifyPersistentCaptureFailure(err) {
         payment_required: "capture requires payment",
         subscription_required: "capture requires an active subscription",
         entitlement_denied: "the account is not entitled to capture conversations",
+        datapack_access_denied: "the account does not have access to the target datapack",
       };
-      return { code, reason: reasons[code] };
+      return { code, reason: reasons[code], scope: "account", detail };
     }
   }
+
+  const statusCode = Number(err && err.statusCode);
+  const statusMatch = normalized.match(/\bmcp http (402|403)\b/);
+  let persistentStatus = null;
+  if (statusCode === 402 || statusCode === 403) {
+    persistentStatus = statusCode;
+  } else if (statusMatch) {
+    persistentStatus = Number(statusMatch[1]);
+  }
+
+  if (persistentStatus === 402) {
+    return {
+      code: "http_402",
+      reason: `Meko rejected capture with HTTP 402 (payment required)${detail ? `: ${detail}` : ""}`,
+      scope: "account",
+      detail,
+    };
+  }
+
+  if (persistentStatus === 403) {
+    // A 403 whose body is an HTML error page never came from the MCP service —
+    // the service answers with JSON. Auth failures arrive as 401 with a JSON
+    // body, so this is not a credential problem. A JSON 403 with no recognized
+    // pattern stays account-scoped: it may apply to every write.
+    //
+    // HTML alone is only a candidate for exchange-scope. The drain loop still
+    // requires an intervening success before a second consecutive drop, because
+    // request-wide edge blocks (rate limit, IP, missing UA historically) share
+    // this shape and would otherwise discard the whole session.
+    const fromEdge = /^\s*<|<html|<!doctype/i.test(detail);
+    return {
+      code: fromEdge ? "content_rejected_403" : "http_403",
+      // Keep exchange reasons short and free of HTML so SessionStart notices
+      // and drop_reasons do not inject error-page markup into model context.
+      reason: fromEdge
+        ? "edge filtering rejected the request body (HTTP 403); this exchange's content cannot be stored as-is"
+        : `Meko rejected capture with HTTP 403${detail ? `: ${detail}` : ""}`,
+      scope: fromEdge ? "exchange" : "account",
+      detail,
+    };
+  }
+
   return null;
 }
 
@@ -2010,6 +2094,15 @@ function persistExchangeCheckpoint(sessionId, state, nextLine, extras) {
     in_flight: { seed: null, user_line: null, user_turn_id: null },
   };
   if (extras.lifecycle) next.lifecycle = extras.lifecycle;
+  if (extras.dropped_exchanges != null) {
+    next.dropped_exchanges = extras.dropped_exchanges;
+  }
+  if (extras.last_drop_reason !== undefined) {
+    next.last_drop_reason = extras.last_drop_reason;
+  }
+  if (extras.last_success_at !== undefined) {
+    next.last_success_at = extras.last_success_at;
+  }
   if (extras.agent_id != null) next.agent_id = extras.agent_id;
   if (extras.agent_id_source != null) next.agent_id_source = extras.agent_id_source;
   if (extras.conversation_id != null) next.conversation_id = extras.conversation_id;
@@ -2416,6 +2509,12 @@ async function drainSession(options) {
     const exchanges = allExchanges.slice(0, maxBatch);
     let captured = 0;
     let failed = 0;
+    let dropped = 0;
+    // Exchange-scoped HTML 403s may be payload-specific OR request-wide.
+    // Allow one consecutive drop without an intervening success so a single
+    // XSS turn cannot wedge the session; a second consecutive one holds the
+    // queue because it may be a session-wide edge block.
+    let consecutiveExchangeDrops = 0;
     let cursorAdvanced = false;
     let watermarkLine = extractFrom;
     state.delivery = "draining";
@@ -2446,13 +2545,13 @@ async function drainSession(options) {
             : exchange.next_line_number != null
               ? exchange.next_line_number
               : safeLine;
-        const remainingAfter = allExchanges.length - captured - 1;
+        const remainingAfter = allExchanges.length - captured - dropped - 1;
         const ck = persistExchangeCheckpoint(sessionId, state, nextLine, {
           delivery:
             remainingAfter > 0 || allExchanges.length > maxBatch
               ? "pending"
               : "idle",
-          queued_exchanges: Math.max(0, allExchanges.length - captured - 1),
+          queued_exchanges: Math.max(0, remainingAfter),
           agent_id: effectiveAgentId,
           agent_id_source: effectiveSource,
           conversation_id: convId,
@@ -2485,32 +2584,106 @@ async function drainSession(options) {
         state = ck.state;
         watermarkLine = state.last_line_number;
         captured++;
+        consecutiveExchangeDrops = 0;
         cursorAdvanced = true;
       } catch (err) {
-        failed++;
         const persistent = classifyPersistentCaptureFailure(err);
+
+        // An exchange-scoped persistent rejection *may* be deterministic for
+        // this exchange only (edge filtering matched a signature inside the
+        // transcript text). Holding forever behind a true payload rejection
+        // wedges the rest of the session (#13). HTML 403 alone is not proof
+        // it is payload-specific — request-wide edge blocks share that shape
+        // — so allow at most one consecutive drop without an intervening
+        // success; a second consecutive failure holds for retry.
+        if (
+          persistent &&
+          persistent.scope === "exchange" &&
+          consecutiveExchangeDrops < 1
+        ) {
+          const boundary = boundaryAfterExchange(turnLines, exchange.user_line);
+          const nextLine =
+            boundary != null
+              ? boundary
+              : exchange.next_line_number != null
+                ? exchange.next_line_number
+                : safeLine;
+          const remainingAfter =
+            allExchanges.length - captured - dropped - 1;
+          const drop = persistExchangeCheckpoint(sessionId, state, nextLine, {
+            delivery:
+              remainingAfter > 0 || allExchanges.length > maxBatch
+                ? "pending"
+                : "idle",
+            queued_exchanges: Math.max(0, remainingAfter),
+            // Nothing was stored, so the last-success stamp must not move.
+            last_success_at: state.last_success_at || null,
+            dropped_exchanges: (state.dropped_exchanges || 0) + 1,
+            last_drop_reason: persistent.reason,
+            agent_id: effectiveAgentId,
+            agent_id_source: effectiveSource,
+            conversation_id: convId,
+            datapack_id: datapackPin ? datapackPin.datapack_id : null,
+            datapack_name: datapackPin ? datapackPin.datapack_name : null,
+          });
+          if (drop.ok) {
+            state = drop.state;
+            watermarkLine = state.last_line_number;
+            dropped++;
+            consecutiveExchangeDrops++;
+            cursorAdvanced = true;
+            process.stderr.write(
+              `[meko-capture] Dropped un-storable exchange (uuid=${exchange.user_uuid}): ` +
+                `${persistent.reason}. Cursor advanced to line ${watermarkLine}; ` +
+                `capture continues for the rest of this session.\n`,
+            );
+            continue;
+          }
+          // Cursor advance itself failed — fall through and hold, rather than
+          // losing the exchange without a durable record that it was dropped.
+          process.stderr.write(
+            `[meko-capture] Could not record dropped exchange (uuid=${exchange.user_uuid}): ${drop.error}\n`,
+          );
+        } else if (persistent && persistent.scope === "exchange") {
+          process.stderr.write(
+            `[meko-capture] Holding after consecutive edge 403s (uuid=${exchange.user_uuid}): ` +
+              `${persistent.reason}. A second consecutive HTML 403 without an ` +
+              `intervening success may be request-wide; queue is held for retry.\n`,
+          );
+        }
+
+        failed++;
         const failureClass = persistent
           ? "persistent"
           : captureState.classifyFailure(err);
         state.delivery =
           failureClass === "transient" ? "retry_wait" : "blocked";
         state.failure_class = failureClass;
-        state.last_error = err.message;
+        // Prefer the classifier reason so quota/entitlement text survives into
+        // state and SessionStart notices instead of an opaque http_403.
+        state.last_error =
+          persistent && persistent.reason
+            ? persistent.detail && !String(persistent.reason).includes(persistent.detail)
+              ? `${persistent.reason}: ${persistent.detail}`
+              : persistent.reason
+            : err.message;
         state.attempt_count = (state.attempt_count || 0) + 1;
         state.next_retry_at = captureState.nextRetryAt({
           failure_class: failureClass,
           attempt_count: state.attempt_count,
         });
-        state.queued_exchanges = allExchanges.length - captured;
+        state.queued_exchanges = allExchanges.length - captured - dropped;
         captureState.writeState(sessionId, state);
         process.stderr.write(
-          `[meko-capture] Failed to add message (uuid=${exchange.user_uuid}): ${err.message}\n`,
+          `[meko-capture] Failed to add message (uuid=${exchange.user_uuid}): ${state.last_error}\n`,
         );
         break;
       }
     }
 
-    const held = allExchanges.length - captured;
+    // Dropped exchanges are resolved, not held: they can never be stored, so
+    // they must not count as backlog or the session reads as permanently behind.
+    const held = allExchanges.length - captured - dropped;
     if (failed === 0 && allExchanges.length <= maxBatch && pendingFromLine === null) {
       watermarkLine = safeLine;
       if (watermarkLine >= state.last_line_number) {
@@ -2528,7 +2701,8 @@ async function drainSession(options) {
         state.queued_exchanges = 0;
       }
       captureState.writeState(sessionId, state);
-      cursorAdvanced = captured > 0 || cursorAdvanced || synthesizedInterrupted;
+      cursorAdvanced =
+        captured > 0 || dropped > 0 || cursorAdvanced || synthesizedInterrupted;
     } else if (failed === 0 && allExchanges.length > maxBatch) {
       state.delivery = "pending";
       state.queued_exchanges = held;
@@ -2541,6 +2715,13 @@ async function drainSession(options) {
       process.stderr.write(
         `[meko-capture] capture stopped at first failure; ` +
           `holding watermark at line ${state.last_line_number} for retry.\n`,
+      );
+    }
+
+    if (dropped > 0) {
+      process.stderr.write(
+        `[meko-capture] ${dropped} exchange(s) could not be stored and were ` +
+          `skipped so the rest of the session still captures.\n`,
       );
     }
 
@@ -2562,6 +2743,7 @@ async function drainSession(options) {
       status,
       session_id: sessionId,
       captured,
+      dropped,
       queued_remaining: held,
       failure_class: failed > 0 ? s.failure_class || null : null,
       error: failed > 0 ? s.last_error || null : null,

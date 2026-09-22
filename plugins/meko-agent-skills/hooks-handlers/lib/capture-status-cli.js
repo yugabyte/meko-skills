@@ -68,6 +68,9 @@ function main() {
   if (existing && existing.last_notified_status !== undefined) {
     health.last_notified_status = existing.last_notified_status;
   }
+  if (existing && existing.last_notified_dropped !== undefined) {
+    health.last_notified_dropped = existing.last_notified_dropped;
+  }
   writeHealthCache(health);
 
   const payload = captureStatusJson(health);

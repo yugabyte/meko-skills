@@ -1588,9 +1588,11 @@ function computeAggregateHealth(states, options) {
     blocked_action_required: 0,
   };
   let queued = 0;
+  let dropped = 0;
   let oldestPendingAge = null;
   let lastSuccessAt = null;
   const blockedReasons = [];
+  const dropReasons = [];
   const sessions = [];
   let status = "healthy";
 
@@ -1611,6 +1613,20 @@ function computeAggregateHealth(states, options) {
         ? coerceNonNegInt(state.queued_exchanges, 0)
         : 0;
     queued += q;
+
+    // Exchanges the server will never accept (see capture.js
+    // classifyPersistentCaptureFailure, scope "exchange"). They are not
+    // backlog — capture moved past them — but the user is still owed the
+    // fact that some turns are missing, so they aggregate separately.
+    const d =
+      state && typeof state === "object"
+        ? coerceNonNegInt(state.dropped_exchanges, 0)
+        : 0;
+    dropped += d;
+    if (d > 0 && state.last_drop_reason) {
+      const reason = String(state.last_drop_reason);
+      if (!dropReasons.includes(reason)) dropReasons.push(reason);
+    }
 
     if (state && state.last_success_at) {
       if (
@@ -1659,6 +1675,7 @@ function computeAggregateHealth(states, options) {
         (entry && entry.failure_class) ||
         null,
       queued_exchanges: q,
+      dropped_exchanges: d,
       lifecycle: state ? state.lifecycle : null,
     });
   }
@@ -1669,9 +1686,11 @@ function computeAggregateHealth(states, options) {
     updated_at: nowIso(nowMs),
     counts,
     queued_exchanges: queued,
+    dropped_exchanges: dropped,
     oldest_pending_age_seconds: oldestPendingAge,
     last_success_at: lastSuccessAt,
     blocked_reasons: blockedReasons,
+    drop_reasons: dropReasons,
     sessions,
   };
 }
@@ -1689,6 +1708,16 @@ function writeHealthCache(health) {
     existing.last_notified_status !== undefined
   ) {
     merged.last_notified_status = existing.last_notified_status;
+  }
+  // Drop notices are one-shot per new count. Timer rebuilds and
+  // --capture-status rewrite from a bare aggregate; keep the watermark
+  // when the caller omits it so SessionStart does not re-announce.
+  if (
+    merged.last_notified_dropped === undefined &&
+    existing &&
+    existing.last_notified_dropped !== undefined
+  ) {
+    merged.last_notified_dropped = existing.last_notified_dropped;
   }
   try {
     atomicWriteJson(healthCachePath(), merged);
