@@ -40,7 +40,7 @@ One call returns roughly the **20 most recent rows**; the response's `total` rep
 
 `memory_search(run_id=<conversation_id>)` and the memory delete tools filter on the row's `meko_conversation_id`, so passing a conversation id there correctly scopes the call to that one conversation — a supported, reliable way to read a single conversation's memories (read/write/delete scoping was made consistent in MEKO-473/MEKO-474, #271). The one gotcha is on the write side: `memory_add`'s own `run_id` is Langfuse trace metadata only and is **not** persisted as the row's conversation id, so a row written with `memory_add(run_id=X)` is not findable via `memory_search(run_id=X)`. Scope writes with `conversation_id`, then filter the matching read by that same id.
 
-## No delete tools for RAG artifacts
+## No MCP tools for index / source / pipeline lifecycle
 
 There are no MCP tools to:
 - Delete a vector index
@@ -48,7 +48,7 @@ There are no MCP tools to:
 - Clear stuck work queue entries
 - Reset a failed pipeline
 
-KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:datapack_id/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
+The one exception is a single uploaded **file**: `knowledgebase_delete_document` removes that file's chunks and metadata. KB-**source** deletion (the registered source, not one file) happens via the Meko control plane (REST: `DELETE /datapacks/:datapack_id/knowledge-bases`, or the UI): it unregisters the source from the Meko API but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
 
 **Workaround:** For stuck or failed indexes, create a new index with a different name. Stale indexes remain in the database until manually cleaned up by an admin.
 

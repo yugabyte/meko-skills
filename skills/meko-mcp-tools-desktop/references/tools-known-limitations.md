@@ -16,7 +16,7 @@ specific language governing permissions and limitations under the License.
 
 These are current limitations of the Meko MCP tools. Know them upfront to avoid wasted tool calls.
 
-## No delete tools for RAG artifacts
+## No MCP tools for index / source / pipeline lifecycle
 
 There are no MCP tools to:
 - Delete a vector index
@@ -24,7 +24,7 @@ There are no MCP tools to:
 - Clear stuck work queue entries
 - Reset a failed pipeline
 
-KB-source deletion happens via the Meko control plane (REST: `DELETE /datapacks/:datapack_id/knowledge-bases`, or the UI), which removes the registration from the Meko API — but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
+The one exception is a single uploaded **file**: `knowledgebase_delete_document` removes that file's chunks and metadata. KB-**source** deletion (the registered source, not one file) happens via the Meko control plane (REST: `DELETE /datapacks/:datapack_id/knowledge-bases`, or the UI): it unregisters the source from the Meko API but does **not** touch the actual `dist_rag` index, source records, or vector data in the datapack's database.
 
 **Workaround:** For stuck or failed indexes, create a new index with a different name. Stale indexes remain in the database until manually cleaned up by an admin.
 

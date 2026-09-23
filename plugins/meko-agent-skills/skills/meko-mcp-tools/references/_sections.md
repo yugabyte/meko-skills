@@ -20,7 +20,7 @@ specific language governing permissions and limitations under the License.
 # Reference Sections
 
 ## Tool Selection & Catalog
-- [tools-overview.md](tools-overview.md) — Complete catalog of all 23 tools available in production, with a decision tree
+- [tools-overview.md](tools-overview.md) — Complete catalog of all 24 tools available in production, with a decision tree
 
 ## Tool-Specific Guidance
 - [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message

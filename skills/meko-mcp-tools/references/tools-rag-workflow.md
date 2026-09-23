@@ -14,7 +14,8 @@ specific language governing permissions and limitations under the License.
 -->
 # Knowledge Base / RAG workflow
 
-`knowledgebase_search` is the only KB tool exposed via MCP. Index
+MCP exposes two KB tools: `knowledgebase_search` (retrieval) and
+`knowledgebase_delete_document` (remove ONE uploaded file). Index
 creation and ingestion happen out of band — through the **Meko UI**
 (`cloud.mekodata.ai`).
 
@@ -22,9 +23,10 @@ creation and ingestion happen out of band — through the **Meko UI**
 
 | Situation | Use this | Why |
 |---|---|---|
-| Search an existing KB | `knowledgebase_search` | The one KB tool exposed via MCP |
+| Search an existing KB | `knowledgebase_search` | Retrieval over the indexed chunks |
 | Add documents to a KB | **Meko UI** — Datapack → Actions → **Add Knowledge** | File-upload dialog (PDF/TXT/MD/JSON/MP4, 5 MB each, 10/batch). No MCP equivalent |
-| Anything else (list / delete / rename / re-index) | **UI** | No MCP tools for KB lifecycle |
+| Delete ONE uploaded file | `knowledgebase_delete_document` | Destructive; `document_id` from search hits; confirm with the user first |
+| Anything else (list / rename / re-index / source lifecycle) | **UI** | No MCP tools for the rest of KB lifecycle |
 
 ## knowledgebase_search — the one you'll actually call
 

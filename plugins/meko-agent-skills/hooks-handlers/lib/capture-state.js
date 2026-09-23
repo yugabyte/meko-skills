@@ -342,6 +342,16 @@ function validateV2(state) {
       `invalid failure_class: ${state.failure_class}`,
     );
   }
+  if (
+    state.consecutive_exchange_drops != null &&
+    (!Number.isInteger(state.consecutive_exchange_drops) ||
+      state.consecutive_exchange_drops < 0)
+  ) {
+    return blockedOutcome(
+      "state_corrupt",
+      "consecutive_exchange_drops must be a non-negative integer",
+    );
+  }
   return { ok: true, state };
 }
 
@@ -461,6 +471,7 @@ function normalizeState(raw, context) {
     last_success_at:
       raw.last_success_at == null ? null : String(raw.last_success_at),
     blocked_reason: null,
+    consecutive_exchange_drops: 0,
   };
 
   const validated = validateV2(state);
@@ -1065,6 +1076,7 @@ function rebucket(state, newConversationId) {
     blocked_reason: null,
     next_retry_at: null,
     attempt_count: 0,
+    consecutive_exchange_drops: 0,
     updated_at: nowIso(),
     last_activity_at: nowIso(),
   };
@@ -1588,9 +1600,11 @@ function computeAggregateHealth(states, options) {
     blocked_action_required: 0,
   };
   let queued = 0;
+  let dropped = 0;
   let oldestPendingAge = null;
   let lastSuccessAt = null;
   const blockedReasons = [];
+  const dropReasons = [];
   const sessions = [];
   let status = "healthy";
 
@@ -1611,6 +1625,20 @@ function computeAggregateHealth(states, options) {
         ? coerceNonNegInt(state.queued_exchanges, 0)
         : 0;
     queued += q;
+
+    // Exchanges the server will never accept (see capture.js
+    // classifyPersistentCaptureFailure, scope "exchange"). They are not
+    // backlog — capture moved past them — but the user is still owed the
+    // fact that some turns are missing, so they aggregate separately.
+    const d =
+      state && typeof state === "object"
+        ? coerceNonNegInt(state.dropped_exchanges, 0)
+        : 0;
+    dropped += d;
+    if (d > 0 && state.last_drop_reason) {
+      const reason = String(state.last_drop_reason);
+      if (!dropReasons.includes(reason)) dropReasons.push(reason);
+    }
 
     if (state && state.last_success_at) {
       if (
@@ -1659,6 +1687,7 @@ function computeAggregateHealth(states, options) {
         (entry && entry.failure_class) ||
         null,
       queued_exchanges: q,
+      dropped_exchanges: d,
       lifecycle: state ? state.lifecycle : null,
     });
   }
@@ -1669,9 +1698,11 @@ function computeAggregateHealth(states, options) {
     updated_at: nowIso(nowMs),
     counts,
     queued_exchanges: queued,
+    dropped_exchanges: dropped,
     oldest_pending_age_seconds: oldestPendingAge,
     last_success_at: lastSuccessAt,
     blocked_reasons: blockedReasons,
+    drop_reasons: dropReasons,
     sessions,
   };
 }
@@ -1689,6 +1720,19 @@ function writeHealthCache(health) {
     existing.last_notified_status !== undefined
   ) {
     merged.last_notified_status = existing.last_notified_status;
+  }
+  // Drop notices are one-shot per new count. The aggregate can shrink when a
+  // session watermark disappears or cannot be read. Clamp the notification
+  // watermark to the current aggregate so a later drop is still reported.
+  if (
+    merged.last_notified_dropped === undefined &&
+    existing &&
+    existing.last_notified_dropped !== undefined
+  ) {
+    merged.last_notified_dropped = Math.min(
+      coerceNonNegInt(existing.last_notified_dropped, 0),
+      coerceNonNegInt(merged.dropped_exchanges, 0),
+    );
   }
   try {
     atomicWriteJson(healthCachePath(), merged);
