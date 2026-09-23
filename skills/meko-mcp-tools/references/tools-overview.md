@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Complete Tool Catalog and Decision Tree
 
-**23 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Memory (8), Conversation (6), Knowledge Base (1), Datapack (5), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
+**24 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Memory (8), Conversation (6), Knowledge Base (2), Datapack (5), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
 
 ## Quick health check before using tools
 
@@ -30,7 +30,7 @@ User wants to...
 ├── Search personal context? ---------------> memory_search (read)
 ├── Search shared datapack knowledge? ------> knowledgebase_search (read)
 ├── Add documents to a knowledge base? -----> point user at Meko UI: Datapack → Actions → Add Knowledge
-│                                              (no MCP tool — Cloud uses UI ingestion only)
+├── Delete ONE knowledge-base file? --------> knowledgebase_delete_document (destructive — confirm with the user first)
 ├── Store or recall information?
 │   ├── Store a fact/preference/entity? -----------> memory_add (write)
 │   ├── Store a full conversation (multi-turn)? ---> conversation_create + conversation_add_message (write)
@@ -44,13 +44,14 @@ User wants to...
     └── CRUD datapack? --------------------> datapack_create/list/describe/update/delete
 ```
 
-Agent / knowledge-base lifecycle is managed **outside** the MCP surface — typically in the Meko control-plane UI — and is not exposed as tools here.
+Agent lifecycle and KB **ingestion / index lifecycle** (adding sources, uploads, re-indexing) are managed outside the MCP surface — typically in the Meko control-plane UI. Deleting a single KB file IS exposed here (`knowledgebase_delete_document`).
 
-## Knowledge Base Tools (1)
+## Knowledge Base Tools (2)
 
 | Tool | Purpose |
 |------|---------|
 | `knowledgebase_search(query, agent_id, conversation_id, datapack_id, limit=10)` | Semantic search across KB chunks. `datapack_id` is REQUIRED (no default). |
+| `knowledgebase_delete_document(document_id, conversation_id, datapack_id=None)` | Permanently delete ONE KB file (chunks + metadata; stored-file delete is best-effort — check `s3_deleted`). Irreversible: confirm with the user first. `document_id` comes from `knowledgebase_search` hits (no filename in hits — echo the id + chunk text). Owner/maintainer/uploader only (status 403 otherwise); status 409 while still indexing — wait and retry. |
 
 ## Memory Tools (8)
 

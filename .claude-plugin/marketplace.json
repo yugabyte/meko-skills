@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Agent skills for the Meko data platform",
-    "version": "2.2.0"
+    "version": "2.3.0"
   },
   "plugins": [
     {

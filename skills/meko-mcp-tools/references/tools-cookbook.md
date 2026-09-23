@@ -221,7 +221,7 @@ conversation_delete(conversation_id="conv-uuid-123", agent_id="agent")
 
 ## Knowledge Base Tools
 
-**KB ingestion is a UI-only activity.** Users upload files via the datapack's Actions → **Add Knowledge** dialog (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). `knowledgebase_search` is the one KB tool exposed via MCP.
+**KB ingestion is a UI-only activity.** Users upload files via the datapack's Actions → **Add Knowledge** dialog (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). MCP exposes two KB tools: `knowledgebase_search`, and `knowledgebase_delete_document` for removing a single uploaded file.
 
 See `tools-rag-workflow.md` for the decision table.
 
@@ -248,6 +248,17 @@ Unlike memory tools, `datapack_id` has no default — you must pass it explicitl
 Populated KBs return results with chunk content and similarity scores. An empty/nonexistent KB is not an error — just `count: 0`.
 
 ---
+
+### knowledgebase_delete_document
+
+Permanently deletes ONE knowledge-base file — its chunks and metadata in one transaction, plus a best-effort delete of the stored file. Irreversible: confirm with the user before calling, and take `document_id` from `knowledgebase_search` hits — hits carry `document_id` but NOT a filename, so confirm by echoing the id and the matched chunk text (the documents list API / Meko UI is the authoritative name source). Never guess an id; non-UUID values are rejected.
+
+```
+knowledgebase_delete_document(document_id="<uuid from a search hit>",
+                              conversation_id="<session conversation id>")
+```
+
+Returns `{"document_id", "chunks_deleted", "s3_deleted"}` — if `s3_deleted` is `false`, say so: the index entries are gone but the stored file may remain. Errors include a numeric `status`: `403` means the user is not the datapack owner, a maintainer, or the file's uploader — report it, don't retry; `409` (`DOCUMENT_PROCESSING`) means the file is still being indexed — wait for indexing to finish, then retry.
 
 ## Artifact Tools
 
@@ -362,4 +373,4 @@ Agent and KB lifecycle does not ship as MCP tools. If the user asks to create/li
 - REST: `POST/GET/DELETE /datapacks/:datapack_id/agents` (agents), `POST/GET/DELETE /datapacks/:datapack_id/knowledge-bases` (KB sources).
 - Or the Meko Cloud UI at `cloud.mekodata.ai` → Datapacks → agents / knowledge-bases.
 
-KB ingestion specifically lives in the UI today: Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5 MB each, 10/batch). Agents querying a populated index use `knowledgebase_search` — see `tools-rag-workflow.md`.
+KB ingestion specifically lives in the UI today: Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5 MB each, 10/batch). Agents querying a populated index use `knowledgebase_search`, and can remove a single uploaded file with `knowledgebase_delete_document` — see `tools-rag-workflow.md`.

@@ -37,7 +37,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide (Desktop)
 
-Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 23 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
+Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 24 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
 
 **Read this first.** The Meko server extracts durable memories automatically from the conversation turns you post to it — the extraction runs *inside* `conversation_add_message`. Claude Desktop has no capture hooks, so **capturing substantive turns via `conversation_add_message` is a core part of using this skill.** Do that and memory takes care of itself: facts the user states get extracted and stored without a separate `memory_add`. Explicit `memory_add` is reserved for a few narrow cases (below). See "Per-turn conversation capture" — it's the heart of this skill.
 
@@ -242,7 +242,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 ## Key concepts
 
-1. **23 tools in 6 groups** (all available in production): Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (1 — `knowledgebase_search`), Datapack (5), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
+1. **24 tools in 6 groups** (all available in production): Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (2 — `knowledgebase_search`, `knowledgebase_delete_document`), Datapack (5), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
 2. **datapack_id routing**: DB, RAG, and memory tools accept optional `datapack_id` (default datapack if omitted). `knowledgebase_search` is the exception: `datapack_id` is **required** there.
 3. **agent_id is multi-agent**: For Claude Desktop, use `agent_id="claude_desktop"` for normal writes and `agent_id="meko_agent"` for cross-project facts. Writes are attributed to `(datapack_id, user_id, agent_id)`. Personal memory reads and `conversation_list` span all of this user's agents; `conversation_get` remains agent-owned. `knowledgebase_search` ignores `agent_id` entirely. See `tools-agent-id-conventions.md`.
 4. **Personal memory vs. team-shared knowledge**: Un-promoted memories are scoped per-user — readable across all of that user's agents, but no other user can see them. With explicit confirmation, `memory_promote` moves exact memories into Shared Knowledge; the Cloud UI's Learnings tab is an alternative. Promoted content is visible to every datapack member. `knowledgebase_search` is the MCP read path for both Shared Knowledge and uploaded documents.
@@ -257,7 +257,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 23 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 24 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-rag-workflow.md` | End-to-end RAG pipeline flow |

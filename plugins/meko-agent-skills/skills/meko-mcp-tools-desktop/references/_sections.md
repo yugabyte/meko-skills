@@ -20,7 +20,7 @@ specific language governing permissions and limitations under the License.
 # Reference Sections
 
 ## Tool Selection & Catalog
-- [tools-overview.md](tools-overview.md) — Complete catalog of all 23 tools available in production, with a decision tree
+- [tools-overview.md](tools-overview.md) — Complete catalog of all 24 tools available in production, with a decision tree
 
 ## Tool-Specific Guidance
 - [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — Multi-agent model: the three buckets (project `<client>:<repo-basename>`, common `meko_agent`, loose client name), personal vs. team-shared read surfaces

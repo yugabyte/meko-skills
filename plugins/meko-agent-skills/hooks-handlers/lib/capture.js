@@ -767,6 +767,7 @@ function writeWatermark(wmPath, convId, lineNum, agentId, datapackPin = null, ag
         last_error: null,
         last_success_at: null,
         blocked_reason: null,
+        consecutive_exchange_drops: 0,
       };
 
   const existingPin =
@@ -2091,6 +2092,10 @@ function persistExchangeCheckpoint(sessionId, state, nextLine, extras) {
     last_error: null,
     blocked_reason: null,
     last_success_at: new Date().toISOString(),
+    consecutive_exchange_drops:
+      extras.consecutive_exchange_drops != null
+        ? extras.consecutive_exchange_drops
+        : 0,
     in_flight: { seed: null, user_line: null, user_turn_id: null },
   };
   if (extras.lifecycle) next.lifecycle = extras.lifecycle;
@@ -2239,6 +2244,7 @@ async function drainSession(options) {
           last_error: null,
           last_success_at: null,
           blocked_reason: null,
+          consecutive_exchange_drops: 0,
         };
     const transcriptPath =
       opts.transcript_path ||
@@ -2514,7 +2520,11 @@ async function drainSession(options) {
     // Allow one consecutive drop without an intervening success so a single
     // XSS turn cannot wedge the session; a second consecutive one holds the
     // queue because it may be a session-wide edge block.
-    let consecutiveExchangeDrops = 0;
+    let consecutiveExchangeDrops = Number.isInteger(
+      state.consecutive_exchange_drops,
+    )
+      ? state.consecutive_exchange_drops
+      : 0;
     let cursorAdvanced = false;
     let watermarkLine = extractFrom;
     state.delivery = "draining";
@@ -2620,6 +2630,7 @@ async function drainSession(options) {
             last_success_at: state.last_success_at || null,
             dropped_exchanges: (state.dropped_exchanges || 0) + 1,
             last_drop_reason: persistent.reason,
+            consecutive_exchange_drops: consecutiveExchangeDrops + 1,
             agent_id: effectiveAgentId,
             agent_id_source: effectiveSource,
             conversation_id: convId,
@@ -2630,7 +2641,7 @@ async function drainSession(options) {
             state = drop.state;
             watermarkLine = state.last_line_number;
             dropped++;
-            consecutiveExchangeDrops++;
+            consecutiveExchangeDrops = state.consecutive_exchange_drops;
             cursorAdvanced = true;
             process.stderr.write(
               `[meko-capture] Dropped un-storable exchange (uuid=${exchange.user_uuid}): ` +
@@ -2663,7 +2674,9 @@ async function drainSession(options) {
         // state and SessionStart notices instead of an opaque http_403.
         state.last_error =
           persistent && persistent.reason
-            ? persistent.detail && !String(persistent.reason).includes(persistent.detail)
+            ? persistent.scope !== "exchange" &&
+              persistent.detail &&
+              !String(persistent.reason).includes(persistent.detail)
               ? `${persistent.reason}: ${persistent.detail}`
               : persistent.reason
             : err.message;

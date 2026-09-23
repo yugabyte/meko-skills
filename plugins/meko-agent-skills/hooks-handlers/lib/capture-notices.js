@@ -11,9 +11,9 @@
  *   recovery notices when status returns to `healthy`. writeHealthCache()
  *   preserves this field when callers omit it.
  *
- *   `last_notified_dropped` — the cumulative dropped-exchange count last shown.
- *   Drop counts only ever grow, so notices compare against this and report the
- *   new drops once instead of repeating the running total every session.
+ *   `last_notified_dropped` records the aggregate dropped-exchange count last
+ *   shown. The aggregate can shrink when a session watermark disappears, so
+ *   refreshes clamp this value before comparing it with the current count.
  */
 
 "use strict";
@@ -250,7 +250,10 @@ function injectHealthNotice(context, opts) {
       health.last_notified_status = existing.last_notified_status;
     }
     if (existing && existing.last_notified_dropped !== undefined) {
-      health.last_notified_dropped = existing.last_notified_dropped;
+      health.last_notified_dropped = Math.min(
+        Number(existing.last_notified_dropped || 0),
+        Number(health.dropped_exchanges || 0),
+      );
     }
     writeHealthCache(health);
   } else {

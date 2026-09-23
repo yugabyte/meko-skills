@@ -342,6 +342,16 @@ function validateV2(state) {
       `invalid failure_class: ${state.failure_class}`,
     );
   }
+  if (
+    state.consecutive_exchange_drops != null &&
+    (!Number.isInteger(state.consecutive_exchange_drops) ||
+      state.consecutive_exchange_drops < 0)
+  ) {
+    return blockedOutcome(
+      "state_corrupt",
+      "consecutive_exchange_drops must be a non-negative integer",
+    );
+  }
   return { ok: true, state };
 }
 
@@ -461,6 +471,7 @@ function normalizeState(raw, context) {
     last_success_at:
       raw.last_success_at == null ? null : String(raw.last_success_at),
     blocked_reason: null,
+    consecutive_exchange_drops: 0,
   };
 
   const validated = validateV2(state);
@@ -1065,6 +1076,7 @@ function rebucket(state, newConversationId) {
     blocked_reason: null,
     next_retry_at: null,
     attempt_count: 0,
+    consecutive_exchange_drops: 0,
     updated_at: nowIso(),
     last_activity_at: nowIso(),
   };
@@ -1709,15 +1721,18 @@ function writeHealthCache(health) {
   ) {
     merged.last_notified_status = existing.last_notified_status;
   }
-  // Drop notices are one-shot per new count. Timer rebuilds and
-  // --capture-status rewrite from a bare aggregate; keep the watermark
-  // when the caller omits it so SessionStart does not re-announce.
+  // Drop notices are one-shot per new count. The aggregate can shrink when a
+  // session watermark disappears or cannot be read. Clamp the notification
+  // watermark to the current aggregate so a later drop is still reported.
   if (
     merged.last_notified_dropped === undefined &&
     existing &&
     existing.last_notified_dropped !== undefined
   ) {
-    merged.last_notified_dropped = existing.last_notified_dropped;
+    merged.last_notified_dropped = Math.min(
+      coerceNonNegInt(existing.last_notified_dropped, 0),
+      coerceNonNegInt(merged.dropped_exchanges, 0),
+    );
   }
   try {
     atomicWriteJson(healthCachePath(), merged);
