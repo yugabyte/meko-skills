@@ -146,6 +146,12 @@ SLUG=$(printf '%s' "$AGENT_ID" | sed -E 's/[^A-Za-z0-9._-]+/_/g; s/^_+|_+$//g')
 DIR="$HOME/.claude/meko-capture"
 PIN="$DIR/pin-$SLUG.json"
 TMP="$PIN.tmp"
+# Compatibility with pins written before MEKO-590, when Claude Code used the
+# current directory's leaf name instead of the repository root name.
+LEGACY_PROJECT=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+|-+$//g' | cut -c1-64)
+LEGACY_AGENT_ID="claude_code${LEGACY_PROJECT:+:$LEGACY_PROJECT}"
+LEGACY_SLUG=$(printf '%s' "$LEGACY_AGENT_ID" | sed -E 's/[^A-Za-z0-9._-]+/_/g; s/^_+|_+$//g')
+LEGACY_PIN="$DIR/pin-$LEGACY_SLUG.json"
 mkdir -p "$DIR"
 ```
 
@@ -160,9 +166,12 @@ cat > "$TMP" <<JSON
 }
 JSON
 mv "$TMP" "$PIN"
+# The new repo-root pin supersedes its old cwd-leaf alias.
+if [ "$LEGACY_PIN" != "$PIN" ]; then rm -f "$LEGACY_PIN"; fi
 ```
 
-For `clear`, delete the file: `rm -f "$PIN"`.
+For `clear`, delete both names so an old pin cannot become active again through
+the compatibility fallback: `rm -f "$PIN" "$LEGACY_PIN"`.
 
 ### 5. Confirm
 

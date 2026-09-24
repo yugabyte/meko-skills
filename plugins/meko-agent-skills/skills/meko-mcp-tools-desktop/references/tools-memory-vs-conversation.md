@@ -40,14 +40,18 @@ memory_search(query="What plan does Alice have?", agent_id="support_bot")
 Conversations are backed by Langfuse sessions and traces. They preserve full structure: who said what, in what order, with what reasoning.
 
 ```
-conversation_create(agent_id="support_bot", user_id="alice_123", title="Pricing discussion")
+conversation_create(agent_id="support_bot", user_id="alice_123", title="Pricing discussion",
+    datapack_id="<uuid from datapack_list>")
 -- Returns: {"id": "conv-uuid-here"}
 
 conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot",
+    datapack_id="<uuid from datapack_list>",
     input="What are your pricing tiers?",
     output="We offer Starter ($10/mo), Pro ($50/mo), and Enterprise (custom).",
     reasoning="Retrieved pricing page data. No special discounts apply.")
 ```
+
+`datapack_id` is required for both calls whenever no server-side default resolves for the caller. Omitting it in that state returns `{"error": "datapack_id_required"}` and persists nothing.
 
 ## Decision Matrix
 

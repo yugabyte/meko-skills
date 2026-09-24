@@ -22,6 +22,7 @@ const {
   importLegacyCaptureErrors,
   legacyErrorsSafeToRemove,
   readHealthCache,
+  scanCompleteForDropClamp,
   scanStates,
   writeHealthCache,
 } = require("./capture-state");
@@ -63,12 +64,15 @@ function main() {
     );
   }
 
-  const health = computeAggregateHealth(scan.entries || []);
+  let health = computeAggregateHealth(scan.entries || []);
   const existing = readHealthCache();
   if (existing && existing.last_notified_status !== undefined) {
     health.last_notified_status = existing.last_notified_status;
   }
-  writeHealthCache(health);
+  const written = writeHealthCache(health, {
+    clampDropped: scanCompleteForDropClamp(scan),
+  });
+  if (written.ok) health = written.health;
 
   const payload = captureStatusJson(health);
   if (json) {

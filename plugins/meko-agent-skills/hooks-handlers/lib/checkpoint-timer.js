@@ -31,6 +31,7 @@ const {
   timerPidPath,
   watermarkDir,
   scanStates,
+  scanCompleteForDropClamp,
   sortOldestFirst,
   computeAggregateHealth,
   writeHealthCache,
@@ -189,7 +190,9 @@ function rebuildHealth() {
   try {
     const scan = scanStates({ includeBlocked: true });
     const health = computeAggregateHealth(scan);
-    writeHealthCache(health);
+    writeHealthCache(health, {
+      clampDropped: scanCompleteForDropClamp(scan),
+    });
   } catch (err) {
     process.stderr.write(
       `[meko-timer] Health rebuild failed: ${err.message}\n`,

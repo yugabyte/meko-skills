@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "meko-agent-skills",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Meko skills for memory, knowledge, conversation capture, and datapack selection.",
   "author": {
     "name": "Meko",

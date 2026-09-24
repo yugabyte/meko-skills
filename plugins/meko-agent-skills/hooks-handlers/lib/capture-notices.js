@@ -5,11 +5,14 @@
  * CommonJS, zero npm deps. Safe to require from capture.js SessionStart
  * without touching the drain loop. See docs/plans/meko-capture-v2-contracts.md.
  *
- * Health cache field extension (documented):
+ * Health cache field extensions (documented):
  *   capture-health.json may include `last_notified_status` — the aggregate
  *   status last shown to the user via SessionStart. Used for one-shot
  *   recovery notices when status returns to `healthy`. writeHealthCache()
  *   preserves this field when callers omit it.
+ *
+ *   `last_notified_dropped` records the aggregate dropped-exchange count last
+ *   shown. A complete refresh may clamp it when session watermarks disappear.
  */
 
 "use strict";
@@ -17,6 +20,7 @@
 const {
   computeAggregateHealth,
   readHealthCache,
+  scanCompleteForDropClamp,
   scanStates,
   writeHealthCache,
 } = require("./capture-state");
@@ -100,13 +104,44 @@ function statuslineSuffixFromHealth(health) {
 }
 
 /**
+ * Sentence describing exchanges that were skipped because the server will
+ * never accept them, or "" when there are none new to report.
+ *
+ * Drops are permanent, so they are not a health status — capture is running
+ * fine — but the user is owed the fact that specific turns are missing.
+ */
+function dropSentence(dropped, previouslyNotified, health) {
+  const newDrops = dropped - previouslyNotified;
+  if (newDrops <= 0) return "";
+  const reasons = Array.isArray(health && health.drop_reasons)
+    ? health.drop_reasons.filter(Boolean)
+    : [];
+  // drop_reasons is the union of every session's last_drop_reason, including
+  // drops already announced. Attribute a reason only when there is one shared
+  // cause; otherwise point at --capture-status instead of mis-blaming.
+  const because =
+    reasons.length === 1
+      ? ` Reason: ${reasons[0]}.`
+      : reasons.length > 1
+        ? " Run `meko-mcp --capture-status` for drop reasons."
+        : "";
+  return (
+    `[Meko capture] ${newDrops} exchange(s) could not be stored and were ` +
+    `skipped; the rest of the session is captured normally.${because} ` +
+    `Tell the user those turns are missing from Meko.`
+  );
+}
+
+/**
  * Build a SessionStart-injectable health notice.
  *
  * - When status ≠ healthy: always emit (exact affected-session + queued counts + reason).
  * - When status === healthy and previousStatus was non-healthy: one-shot recovery notice.
  * - When status === healthy and previous was already healthy / null: no notice.
+ * - Any new dropped exchanges are appended in every case, and are enough on
+ *   their own to produce a notice while status is healthy.
  *
- * @param {{ health: object, previousStatus?: string|null }} opts
+ * @param {{ health: object, previousStatus?: string|null, previousDropped?: number }} opts
  * @returns {{
  *   notice: string|null,
  *   nextNotifiedStatus: string,
@@ -114,10 +149,11 @@ function statuslineSuffixFromHealth(health) {
  *   status: string,
  *   affectedSessions: number,
  *   queuedExchanges: number,
+ *   droppedExchanges: number,
  *   reason: string,
  * }}
  */
-function buildHealthNotice({ health, previousStatus } = {}) {
+function buildHealthNotice({ health, previousStatus, previousDropped } = {}) {
   const h = health && typeof health === "object" ? health : { status: "healthy" };
   const status = h.status || "healthy";
   const prev =
@@ -126,29 +162,37 @@ function buildHealthNotice({ health, previousStatus } = {}) {
       : String(previousStatus);
   const affected = affectedSessionCount(h);
   const queued = Number(h.queued_exchanges || 0);
+  const dropped = Number(h.dropped_exchanges || 0);
+  const notifiedDropped = Number(previousDropped || 0);
+  const drops = dropSentence(dropped, notifiedDropped, h);
   const reason = reasonForHealth(h);
+  const join = (a, b) => (a && b ? `${a}\n\n${b}` : a || b || null);
 
   if (status === "healthy") {
     if (prev && NON_HEALTHY.has(prev)) {
       return {
-        notice:
+        notice: join(
           "[Meko capture] Capture recovered — all sessions healthy. " +
-          "Queued backlog is clear. Automatic conversation capture is running normally again.",
+            "Queued backlog is clear. Automatic conversation capture is running normally again.",
+          drops,
+        ),
         nextNotifiedStatus: "healthy",
         shouldPersistNotified: true,
         status,
         affectedSessions: 0,
         queuedExchanges: queued,
+        droppedExchanges: dropped,
         reason,
       };
     }
     return {
-      notice: null,
+      notice: drops || null,
       nextNotifiedStatus: "healthy",
-      shouldPersistNotified: prev !== "healthy",
+      shouldPersistNotified: prev !== "healthy" || Boolean(drops),
       status,
       affectedSessions: 0,
       queuedExchanges: queued,
+      droppedExchanges: dropped,
       reason,
     };
   }
@@ -160,10 +204,12 @@ function buildHealthNotice({ health, previousStatus } = {}) {
         ? "degraded_retrying"
         : "catching_up";
 
-  const notice =
+  const notice = join(
     `[Meko capture] Status: ${label} — ${affected} session(s) affected, ` +
-    `${queued} exchange(s) queued. Reason: ${reason}. ` +
-    `Run \`meko-mcp --capture-status\` for details.`;
+      `${queued} exchange(s) queued. Reason: ${reason}. ` +
+      `Run \`meko-mcp --capture-status\` for details.`,
+    drops,
+  );
 
   return {
     notice,
@@ -172,6 +218,7 @@ function buildHealthNotice({ health, previousStatus } = {}) {
     status,
     affectedSessions: affected,
     queuedExchanges: queued,
+    droppedExchanges: dropped,
     reason,
   };
 }
@@ -195,14 +242,23 @@ function injectHealthNotice(context, opts) {
   const base = context == null ? "" : String(context);
 
   let health = null;
+  let scanComplete = false;
   if (refresh) {
     const scan = scanStates({ includeBlocked: true });
+    scanComplete = scanCompleteForDropClamp(scan);
     health = computeAggregateHealth(scan.entries || []);
     const existing = readHealthCache();
     if (existing && existing.last_notified_status !== undefined) {
       health.last_notified_status = existing.last_notified_status;
     }
-    writeHealthCache(health);
+    if (existing && existing.last_notified_dropped !== undefined) {
+      const previous = Number(existing.last_notified_dropped || 0);
+      health.last_notified_dropped = scanComplete
+        ? Math.min(previous, Number(health.dropped_exchanges || 0))
+        : previous;
+    }
+    const written = writeHealthCache(health, { clampDropped: scanComplete });
+    if (written.ok) health = written.health;
   } else {
     health = readHealthCache() || {
       schema_version: 1,
@@ -214,9 +270,11 @@ function injectHealthNotice(context, opts) {
         blocked_action_required: 0,
       },
       queued_exchanges: 0,
+      dropped_exchanges: 0,
       oldest_pending_age_seconds: null,
       last_success_at: null,
       blocked_reasons: [],
+      drop_reasons: [],
       sessions: [],
     };
   }
@@ -225,13 +283,23 @@ function injectHealthNotice(context, opts) {
     health.last_notified_status !== undefined
       ? health.last_notified_status
       : null;
-  const built = buildHealthNotice({ health, previousStatus });
+  const previousDropped = Number(health.last_notified_dropped || 0);
+  const built = buildHealthNotice({ health, previousStatus, previousDropped });
 
   if (persist && built.shouldPersistNotified) {
-    writeHealthCache({
+    const nextHealth = {
       ...health,
       last_notified_status: built.nextNotifiedStatus,
-    });
+    };
+    if (scanComplete || !refresh) {
+      nextHealth.last_notified_dropped = built.droppedExchanges;
+    } else {
+      nextHealth.last_notified_dropped = Math.max(
+        previousDropped,
+        built.droppedExchanges,
+      );
+    }
+    writeHealthCache(nextHealth, { clampDropped: scanComplete });
   }
 
   if (!built.notice) return base;
@@ -255,6 +323,7 @@ function formatCaptureStatusText(health) {
       `degraded_retrying=${Number(counts.degraded_retrying || 0)} ` +
       `blocked_action_required=${Number(counts.blocked_action_required || 0)}`,
     `  queued exchanges: ${Number(h.queued_exchanges || 0)}`,
+    `  dropped exchanges: ${Number(h.dropped_exchanges || 0)}`,
     `  oldest pending age (seconds): ${
       h.oldest_pending_age_seconds == null ? "n/a" : h.oldest_pending_age_seconds
     }`,
@@ -264,6 +333,10 @@ function formatCaptureStatusText(health) {
   const blocked = Array.isArray(h.blocked_reasons) ? h.blocked_reasons : [];
   if (blocked.length) {
     lines.push(`  blocked reasons: ${blocked.join("; ")}`);
+  }
+  const dropReasons = Array.isArray(h.drop_reasons) ? h.drop_reasons : [];
+  if (dropReasons.length) {
+    lines.push(`  drop reasons: ${dropReasons.join("; ")}`);
   }
   return lines.join("\n");
 }
@@ -300,10 +373,12 @@ function captureStatusJson(health) {
       ),
     },
     queued_exchanges: Number(h.queued_exchanges || 0),
+    dropped_exchanges: Number(h.dropped_exchanges || 0),
     oldest_pending_age_seconds:
       h.oldest_pending_age_seconds == null ? null : h.oldest_pending_age_seconds,
     last_success_at: h.last_success_at || null,
     blocked_reasons: Array.isArray(h.blocked_reasons) ? h.blocked_reasons : [],
+    drop_reasons: Array.isArray(h.drop_reasons) ? h.drop_reasons : [],
     sessions: Array.isArray(h.sessions) ? h.sessions : [],
   };
 }
