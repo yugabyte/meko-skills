@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "meko": {
+      "type": "streamable-http",
+      "url": "https://mcp.mekodata.ai/mcp",
+      "headers": {
+        "User-Agent": "meko-kiro-power/1.0"
+      }
+    }
+  }
+}

@@ -28,6 +28,11 @@ const ALLOWED_HOSTS = new Set([
   "docs.mekodata.ai",
   "meko.yugabyte.com",
   "mcp.mekodata.ai",
+  // Meko Cloud console, where users sign up and copy datapack IDs. Linked from
+  // the Kiro power's README and INSTRUCTIONS.md.
+  "cloud.mekodata.ai",
+  // Agent Plugins specification, the format the Kiro power follows.
+  "agent-plugins.org",
   "yugabyte.com",
   "www.yugabyte.com",
   "github.com",

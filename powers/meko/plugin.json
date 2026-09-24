@@ -1,0 +1,27 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "meko",
+  "displayName": "Meko",
+  "version": "1.0.0",
+  "description": "Long-term memory and a shared team knowledge base for Kiro, powered by Meko. Use it when the user asks you to remember, save, or recall something across sessions, asks what you know about a topic, or wants to search documents their team uploaded to a Meko datapack.",
+  "author": {
+    "name": "Meko",
+    "email": "info@yugabyte.com",
+    "url": "https://mekodata.ai"
+  },
+  "homepage": "https://mekodata.ai",
+  "repository": "https://github.com/yugabyte/meko-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "meko",
+    "remember",
+    "remember this",
+    "recall",
+    "what do you know",
+    "long-term memory",
+    "persistent memory",
+    "memory across sessions",
+    "knowledge base",
+    "datapack"
+  ]
+}

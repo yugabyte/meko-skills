@@ -28,7 +28,16 @@ Each memory is written under an `agent_id` (stored on the row, shown as the UI b
 | Loose client name | Non-coding agents (Claude Desktop, generic MCP clients) where there's no project concept. | `claude_desktop` |
 | `meko_agent` | Cross-project common bucket — facts any agent should see regardless of project (user identity, global preferences). The server stores empty/missing `agent_id` here automatically. | `meko_agent` |
 
-**Discover the value at session start.** The SessionStart hook injects the chosen `agent_id` into the first-turn `additionalContext` based on the cwd's repo basename. Use that value verbatim — do not re-derive it. If the block is absent, fall back to `<client>:<basename(cwd)>` or ask the user.
+**Discover the value at session start.** The SessionStart hook injects the chosen `agent_id` into the first-turn `additionalContext`. Project-scoped ids are derived by walking parents of the session cwd for `.git` and taking the repo-root basename; the walk stops at `$HOME`, so a git-tracked home directory does not claim every directory beneath it. Sessions outside any repo get the bare client name (`claude_code`), not a leaf basename.
+
+Use the injected value verbatim — do not re-derive it. A resumed session, or one that re-fires SessionStart (`/clear`, `/compact`), keeps the bucket its conversation already belongs to, and `MEKO_AGENT_ID` overrides either, so the injected value is not always what a fresh derivation would produce. If the block is absent, ask the user rather than guessing from the raw cwd basename (sibling directories like `docs/` or `webapp/` in unrelated repos would collide).
+
+MEKO-590 changed new coding-session ids from the cwd leaf to the repository
+root. Existing ownership does not change in place: migration checkpoints and
+Kiro session intents keep their persisted pre-MEKO-590 id, because the server
+does not allow an existing conversation's owner to change. Datapack pins also
+fall back to the old cwd-leaf filename until the user pins or clears again.
+New sessions without persisted state use the repository-root id.
 
 For genuinely cross-project facts ("the user's name is Alice", "the user prefers dark mode") write with `agent_id="meko_agent"` so their attribution clearly identifies the common cross-project bucket.
 

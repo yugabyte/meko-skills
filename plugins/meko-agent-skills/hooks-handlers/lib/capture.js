@@ -28,8 +28,11 @@
  * Environment:
  *   MEKO_MCP_URL       MCP server URL (default: http://localhost:8000/mcp)
  *   MEKO_AGENT_ID      Agent identifier override; if unset, derived from the
- *                      session's cwd as `claude_code:<repo-basename>` (or
- *                      `meko_agent` if cwd is unknown). See deriveAgentId().
+ *                      session's cwd by walking parents for `.git` and taking
+ *                      the repo root's basename, as `claude_code:<repo>` (or
+ *                      the bare client name if the session is outside a repo,
+ *                      so sibling subdirectories in unrelated repos can't
+ *                      silently collide). See deriveAgentId().
  *   MEKO_API_KEY        API key for Cloud Meko auth (optional, omit for local)
  *   MEKO_API_TIMEOUT   Request timeout in seconds (default: 10)
  *   MEKO_WATERMARK_DIR Watermark directory (default: ~/.claude/meko-capture)
@@ -53,15 +56,72 @@ const COMMON_BUCKET_AGENT_ID = "meko_agent";
 const AGENT_ID_MAX_LEN = 64;
 
 /**
+ * The user's home directory, read fresh so a re-pointed `$HOME` (tests,
+ * sandboxes) is honored. Mirror of `homeBoundary` in
+ * installer/lib/migrate/id.mjs.
+ */
+function homeBoundary() {
+  const fromEnv = (process.env.HOME || "").trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  try {
+    const h = os.homedir();
+    return h ? path.resolve(h) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Walk parents of `cwd` looking for a `.git` entry (directory for a normal
+ * checkout, file for a submodule / linked worktree). Returns the absolute
+ * repo-root path, or `null` if none is found. Mirror of `resolveRepoRoot`
+ * in installer/lib/migrate/id.mjs.
+ *
+ * The walk stops at `$HOME` (from below only, so a git-tracked home is still
+ * its own repo root): without that bound, dotfiles-under-git would make every
+ * non-repo directory under home derive `claude_code:<username>`.
+ */
+function resolveRepoRoot(cwd) {
+  if (!cwd || typeof cwd !== "string") return null;
+  let dir;
+  try {
+    dir = path.resolve(cwd);
+  } catch {
+    return null;
+  }
+  const start = dir;
+  const home = homeBoundary();
+  let prev = null;
+  while (dir && dir !== prev) {
+    // A directory below a git-tracked home must not inherit home's `.git`.
+    if (home && dir === home && dir !== start) return null;
+    try {
+      fs.statSync(path.join(dir, ".git"));
+      return dir;
+    } catch {
+      // keep walking
+    }
+    // Check home itself for `.git`, then stop. A non-git home must not
+    // inherit repository state from /Users, /home, or /.
+    if (home && dir === home) return null;
+    prev = dir;
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+
+/**
  * Derive an `agent_id` for a Meko write. Mirror of `deriveAgentId` in
  * installer/lib/migrate/id.mjs — kept inline because capture.js is published
  * in a separate package with no module dependencies on the installer.
  *
  *   - `envOverride` (typically MEKO_AGENT_ID) wins if non-empty.
- *   - Coding clients (claude_code, cursor, codex, kiro) → `<client>:<repo-basename>`,
- *     with the basename lowercased and non-`[a-z0-9-]` runs collapsed to `-`.
- *     Outside a repo → bare client name (keeps coding-agent traffic out of
- *     the common bucket).
+ *   - Coding clients (claude_code, cursor, codex, kiro) →
+ *     `<client>:<repo-basename>`, where the basename comes from the
+ *     nearest ancestor of `cwd` that contains `.git`. Lowercased,
+ *     non-`[a-z0-9-]` runs collapse to `-`. Outside a repo → bare
+ *     client name (keeps sibling `docs`/`src`/`webapp` directories in
+ *     unrelated repos from collapsing into one agent_id — MEKO-590).
  *   - Loose clients (claude-desktop) → `claude_desktop`.
  *   - Anything else → `meko_agent` (common cross-project bucket).
  */
@@ -78,14 +138,41 @@ function deriveAgentId(opts) {
   ) {
     return COMMON_BUCKET_AGENT_ID;
   }
-  const rawBase = opts && opts.cwd ? path.basename(opts.cwd) : "";
-  if (!rawBase || rawBase === "." || rawBase === "/") return client;
-  const project = rawBase.toLowerCase()
+  const repoRoot = opts && Object.prototype.hasOwnProperty.call(opts, "repoRoot")
+    ? opts.repoRoot
+    : resolveRepoRoot(opts && opts.cwd);
+  if (!repoRoot) return client;
+  const project = path.basename(repoRoot).toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, AGENT_ID_MAX_LEN);
   if (!project) return client;
   return `${client}:${project}`;
+}
+
+/**
+ * Pre-MEKO-590 coding-agent derivation. Existing pin filenames and session
+ * state may still use this cwd-leaf id, so it remains a read-only alias while
+ * new sessions use the repo-root id from `deriveAgentId`.
+ */
+function deriveLegacyAgentId(opts) {
+  const envOverride = opts && typeof opts.envOverride === "string"
+    ? opts.envOverride.trim()
+    : "";
+  if (envOverride) return envOverride;
+  const client = opts && opts.client ? String(opts.client).trim() : "";
+  if (client === "claude-desktop" || client === "claude_desktop") {
+    return "claude_desktop";
+  }
+  if (!["claude_code", "cursor", "codex", "kiro"].includes(client)) {
+    return COMMON_BUCKET_AGENT_ID;
+  }
+  const rawBase = opts && opts.cwd ? path.basename(opts.cwd) : "";
+  const project = rawBase.toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, AGENT_ID_MAX_LEN);
+  return project ? `${client}:${project}` : client;
 }
 
 /**
@@ -114,9 +201,7 @@ function resolveHookClient() {
  *   4. cwd from the hook input.
  *   5. process.cwd() — last resort if no transcript metadata yet.
  */
-function resolveSessionAgentId(transcriptPath, hookInput = null) {
-  const envOverride = process.env.MEKO_AGENT_ID;
-  if (envOverride && envOverride.trim()) return envOverride.trim();
+function pickSessionCwd(transcriptPath, hookInput) {
   const meta = transcriptPath ? peekTranscriptMetadata(transcriptPath) : null;
   const nested = hookInput && hookInput.hookSpecificInput && typeof hookInput.hookSpecificInput === "object"
     ? hookInput.hookSpecificInput
@@ -127,7 +212,7 @@ function resolveSessionAgentId(transcriptPath, hookInput = null) {
   const nestedRoots = Array.isArray(nested.workspace_roots) ? nested.workspace_roots : [];
   const workspaceRoot = [...roots, ...nestedRoots]
     .find((item) => typeof item === "string" && item.trim());
-  const cwd =
+  return (
     (meta && meta.cwd) ||
     hookInput?.workspace_path ||
     hookInput?.workspacePath ||
@@ -138,9 +223,66 @@ function resolveSessionAgentId(transcriptPath, hookInput = null) {
     workspaceRoot ||
     hookInput?.cwd ||
     nested.cwd ||
-    process.cwd();
+    process.cwd()
+  );
+}
+
+function resolveSessionAgentId(transcriptPath, hookInput = null, precomputedCwd = null) {
+  const envOverride = process.env.MEKO_AGENT_ID;
+  if (envOverride && envOverride.trim()) return envOverride.trim();
+  // SessionStart picks the cwd once and passes it in, so the transcript is
+  // peeked once per hook invocation rather than once per consumer.
+  const cwd = precomputedCwd || pickSessionCwd(transcriptPath, hookInput);
   const client = resolveHookClient();
   return deriveAgentId({ client, cwd, envOverride });
+}
+
+/**
+ * Emit a one-line derivation log to stderr so future MEKO-590–class
+ * collisions ("why did session X land under agent_id Y?") are diagnosable
+ * from capture logs. Called once at SessionStart, not on every drain, so
+ * test assertions on downstream hooks stay stable.
+ *
+ * Takes the already-picked `cwd` so the log reports the SAME cwd the
+ * derivation actually used (Cursor's `workspace_roots` included — the
+ * hook's raw cwd is `~/.cursor`, which would print misleadingly) without
+ * a second transcript peek.
+ *
+ * Reports `derivedAgentId`, NOT necessarily the id this session writes
+ * under: the watermark-reuse and resume branches run
+ * `reconcileCachedAgentId` afterwards and may preserve a cached bucket.
+ * `logEffectiveAgentId` closes that gap on those paths.
+ */
+function logAgentIdDerivation(cwd, derivedAgentId) {
+  const envOverride = (process.env.MEKO_AGENT_ID || "").trim();
+  if (envOverride) {
+    process.stderr.write(
+      `[meko-capture] deriveAgentId: source=env-override derivedAgentId=${derivedAgentId}\n`,
+    );
+    return;
+  }
+  const client = resolveHookClient();
+  const repoRoot = resolveRepoRoot(cwd);
+  process.stderr.write(
+    `[meko-capture] deriveAgentId: client=${client} cwd=${cwd || ""} ` +
+    `resolvedRepoRoot=${repoRoot || "<none>"} derivedAgentId=${derivedAgentId}\n`,
+  );
+}
+
+/**
+ * Log the agent_id this session actually writes under, when a cached bucket
+ * won over the fresh derivation (`/clear`, `/compact`, resume, or a HOLD).
+ * Silent when it matches, so the common path stays one line.
+ *
+ * Without this, "why did session X land under agent_id Y?" is unanswerable
+ * from the logs in exactly the cases where the answer is not the derivation.
+ */
+function logEffectiveAgentId(derivedAgentId, effectiveAgentId, reason) {
+  if (!effectiveAgentId || effectiveAgentId === derivedAgentId) return;
+  process.stderr.write(
+    `[meko-capture] deriveAgentId: effectiveAgentId=${effectiveAgentId} ` +
+    `(overrides derivedAgentId=${derivedAgentId}; reason=${reason})\n`,
+  );
 }
 
 // Coding clients that derive a `<client>:<repo>` agent_id. Kept in
@@ -767,6 +909,7 @@ function writeWatermark(wmPath, convId, lineNum, agentId, datapackPin = null, ag
         last_error: null,
         last_success_at: null,
         blocked_reason: null,
+        consecutive_exchange_drops: 0,
       };
 
   const existingPin =
@@ -862,6 +1005,7 @@ function makeDrainResult(partial) {
     lifecycle: partial.lifecycle || "active",
     delivery: partial.delivery || "idle",
     next_retry_at: partial.next_retry_at || null,
+    dropped: partial.dropped || 0,
   };
 }
 
@@ -883,27 +1027,38 @@ function datapackPinSlug(agentId) {
  * The pin is a sidecar file at `<WATERMARK_DIR>/pin-<slug(agent_id)>.json`
  * with shape `{ datapack_id, datapack_name, selected_at }`. Project-scoped:
  * keyed by the same `agent_id` the hook derives for memory writes
- * (`claude_code:<repo-basename>`), so a pin set in one Claude Code window
- * for a repo applies to every other window in that repo, and survives
- * `/clear`, `/compact`, and Claude Code restart.
+ * (`claude_code:<repo-basename>`, where the basename is the nearest
+ * ancestor of the session cwd containing `.git`), so a pin set in one
+ * Claude Code window for a repo applies to every other window in that
+ * repo, and survives `/clear`, `/compact`, and Claude Code restart.
  *
- * Hooks are read-only — only the skill writes this file. Returns null if
- * the file is absent, malformed, or missing required fields, so SessionStart
- * can proceed unchanged when no pin is set.
+ * Hooks are read-only — only the skill writes this file. The legacy id is
+ * checked only when the repo-root id has no valid pin, preserving pins written
+ * before MEKO-590 without preventing a newly written repo-root pin from
+ * taking precedence.
  */
-function readDatapackPin(agentId) {
-  const slug = datapackPinSlug(agentId);
-  if (!slug) return null;
-  const pinPath = path.join(WATERMARK_DIR, `pin-${slug}.json`);
-  try {
-    const obj = JSON.parse(fs.readFileSync(pinPath, "utf-8"));
-    const id = typeof obj.datapack_id === "string" ? obj.datapack_id.trim() : "";
-    const name = typeof obj.datapack_name === "string" ? obj.datapack_name.trim() : "";
-    if (!id || !name) return null;
-    return { datapack_id: id, datapack_name: name, selected_at: obj.selected_at || "" };
-  } catch {
-    return null;
+function readDatapackPin(agentId, legacyAgentId = null) {
+  const candidates = [...new Set([agentId, legacyAgentId].filter(Boolean))];
+  for (const candidate of candidates) {
+    const slug = datapackPinSlug(candidate);
+    if (!slug) continue;
+    const pinPath = path.join(WATERMARK_DIR, `pin-${slug}.json`);
+    try {
+      const obj = JSON.parse(fs.readFileSync(pinPath, "utf-8"));
+      const id = typeof obj.datapack_id === "string" ? obj.datapack_id.trim() : "";
+      const name = typeof obj.datapack_name === "string" ? obj.datapack_name.trim() : "";
+      if (!id || !name) continue;
+      if (candidate !== agentId) {
+        process.stderr.write(
+          `[meko-capture] datapack pin: using legacy agent_id alias ${candidate}\n`,
+        );
+      }
+      return { datapack_id: id, datapack_name: name, selected_at: obj.selected_at || "" };
+    } catch {
+      // Try the compatibility alias, if any.
+    }
   }
+  return null;
 }
 
 function datapackPinFromWatermark(watermark) {
@@ -1055,24 +1210,78 @@ function parseMcpResponseBody(data) {
   return JSON.parse(payload);
 }
 
-function classifyPersistentCaptureFailure(err) {
-  const message = err && err.message ? String(err.message) : String(err || "");
-  const normalized = message.toLowerCase();
-  const statusCode = Number(err && err.statusCode);
-  const statusMatch = normalized.match(/\bmcp http (402|403)\b/);
-  let persistentStatus = null;
-  if (statusCode === 402 || statusCode === 403) {
-    persistentStatus = statusCode;
-  } else if (statusMatch) {
-    persistentStatus = Number(statusMatch[1]);
-  }
+/**
+ * Collapse a response body to a single-line snippet for error records.
+ * Display/persistence stays short; pattern matching uses the fuller body.
+ */
+function errorBodySnippet(err) {
+  const body = err && err.responseBody ? String(err.responseBody) : "";
+  return body.trim().replace(/\s+/g, " ").slice(0, 200);
+}
 
-  if (persistentStatus) {
-    return {
-      code: `http_${persistentStatus}`,
-      reason: `Meko rejected capture with HTTP ${persistentStatus}`,
-    };
+/**
+ * Full collapsed response body for classifier pattern matching.
+ * mcpPost keeps up to 1000 chars on err.responseBody; the message snippet
+ * is only 200, so reasons past that window are only visible here.
+ */
+function errorBodyForMatch(err) {
+  const body = err && err.responseBody ? String(err.responseBody) : "";
+  return body.trim().replace(/\s+/g, " ");
+}
+
+function isHtmlErrorDetail(detail) {
+  return /^\s*<|<html|<!doctype/i.test(String(detail || ""));
+}
+
+function persistentFailureText(persistent, fallback) {
+  if (!persistent || !persistent.reason) return fallback;
+  const detail = persistent.detail ? String(persistent.detail) : "";
+  if (
+    !detail ||
+    isHtmlErrorDetail(detail) ||
+    String(persistent.reason).includes(detail)
+  ) {
+    return persistent.reason;
   }
+  return `${persistent.reason}: ${detail}`;
+}
+
+/**
+ * Classify a capture failure that will not clear on retry.
+ *
+ * Returns null for transient failures. Otherwise:
+ *   { code, reason, scope, detail }
+ *
+ * `scope` says WHAT is rejected, which is what the caller needs to decide
+ * whether retrying can ever succeed:
+ *   - "account"  the account/plan is refusing all writes (quota, entitlement,
+ *                402). Every exchange would fail identically, so the caller
+ *                holds the queue: the block clears when billing does, and
+ *                dropping would lose the whole session.
+ *   - "exchange" the response looks like an edge proxy rejecting THIS
+ *                request's body (HTTP 403 with an HTML body — see #13). The
+ *                caller may skip one such exchange so later turns still
+ *                drain; a second consecutive exchange-scoped failure without
+ *                an intervening success is treated as request-wide and held,
+ *                because HTML 403 alone does not prove payload-specificity
+ *                (missing UA, IP/ASN, rate-limit pages share the shape).
+ *
+ * Body patterns are tested BEFORE the status code. An account-level rejection
+ * that arrives as 402/403 (the common case) would otherwise collapse into an
+ * opaque `http_403` and send the user off regenerating a token that was never
+ * at fault. `detail` is a short body snippet; `reason` is what callers persist
+ * into `last_error` / notices so the real cause survives.
+ * Pass `{ exchange: true }` only from the addMessage path. Initialize and
+ * conversation_create HTML 403s are request-wide, so they stay account-scoped.
+ */
+function classifyPersistentCaptureFailure(err, opts) {
+  const options = opts && typeof opts === "object" ? opts : {};
+  const forExchange = options.exchange === true;
+  const message = err && err.message ? String(err.message) : String(err || "");
+  const detail = errorBodySnippet(err);
+  // Search the fuller responseBody (up to mcpPost's 1000-char keep) so a
+  // reason that fell outside the 200-char message snippet is still matched.
+  const normalized = `${message} ${errorBodyForMatch(err)}`.toLowerCase();
 
   const persistentPatterns = [
     ["free_tier_limit_reached", /free[_\s-]?tier.*limit|free_tier_limit_reached/],
@@ -1082,6 +1291,13 @@ function classifyPersistentCaptureFailure(err) {
     ["payment_required", /payment[_\s-]?required/],
     ["subscription_required", /subscription[_\s-]?(required|inactive|expired)/],
     ["entitlement_denied", /entitlement.*(denied|required|missing)|(?:denied|required|missing).*entitlement/],
+    // MEKO-656/MEKO-691: _resolve_datapack_id now returns this code (instead
+    // of raising) when the caller has no ownership/share grant on the
+    // datapack_id it supplied. Account-scoped like entitlement_denied above —
+    // every write against that same datapack_id would fail identically until
+    // access is (re-)granted out of band, so the caller should hold rather
+    // than retry forever or silently drop the turn.
+    ["datapack_access_denied", /datapack_access_denied/],
   ];
   for (const [code, pattern] of persistentPatterns) {
     if (pattern.test(normalized)) {
@@ -1093,10 +1309,55 @@ function classifyPersistentCaptureFailure(err) {
         payment_required: "capture requires payment",
         subscription_required: "capture requires an active subscription",
         entitlement_denied: "the account is not entitled to capture conversations",
+        datapack_access_denied: "the account does not have access to the target datapack",
       };
-      return { code, reason: reasons[code] };
+      return { code, reason: reasons[code], scope: "account", detail };
     }
   }
+
+  const statusCode = Number(err && err.statusCode);
+  const statusMatch = normalized.match(/\bmcp http (402|403)\b/);
+  let persistentStatus = null;
+  if (statusCode === 402 || statusCode === 403) {
+    persistentStatus = statusCode;
+  } else if (statusMatch) {
+    persistentStatus = Number(statusMatch[1]);
+  }
+
+  if (persistentStatus === 402) {
+    return {
+      code: "http_402",
+      reason: "Meko rejected capture with HTTP 402 (payment required)",
+      scope: "account",
+      detail,
+    };
+  }
+
+  if (persistentStatus === 403) {
+    // A 403 whose body is an HTML error page never came from the MCP service —
+    // the service answers with JSON. Auth failures arrive as 401 with a JSON
+    // body, so this is not a credential problem. A JSON 403 with no recognized
+    // pattern stays account-scoped: it may apply to every write.
+    //
+    // HTML alone is only a candidate for exchange-scope. The drain loop still
+    // requires an intervening success before a second consecutive drop, because
+    // request-wide edge blocks (rate limit, IP, missing UA historically) share
+    // this shape and would otherwise discard the whole session.
+    const fromEdge = isHtmlErrorDetail(detail);
+    return {
+      code: fromEdge ? "content_rejected_403" : "http_403",
+      // Keep exchange reasons short and free of HTML so SessionStart notices
+      // and drop_reasons do not inject error-page markup into model context.
+      reason: fromEdge
+        ? forExchange
+          ? "edge filtering rejected the request body (HTTP 403); this exchange's content cannot be stored as-is"
+          : "edge filtering rejected the request (HTTP 403)"
+        : `Meko rejected capture with HTTP 403${detail ? `: ${detail}` : ""}`,
+      scope: fromEdge && forExchange ? "exchange" : "account",
+      detail,
+    };
+  }
+
   return null;
 }
 
@@ -1265,6 +1526,24 @@ async function createConversation(sessionId, agentId, metadata = null, datapackI
   if (datapackId) payload.datapack_id = datapackId;
   const response = await mcpCall("conversation_create", payload);
   const result = extractToolResult(response);
+  // MEKO-592: the server now returns a structured error when no datapack_id
+  // resolves (missing pin, no server-side default). Before this guard the
+  // server returned a success payload with a fabricated conversation id and
+  // every subsequent add_message came back not_found — capture was silently
+  // dead. Propagate the error like conversation_add_message already does so
+  // callers can distinguish "server unreachable" from "action required (pin
+  // a datapack)".
+  if (result && result.error) {
+    const err = new Error(`conversation_create failed: ${JSON.stringify(result.error)}`);
+    err.code = result.error;
+    err.detail = result.detail || "";
+    // Distinguish a server-returned structured error from a Node system error
+    // (e.g. ECONNREFUSED off `fetch`), which also carries `.code`. The catch
+    // site branches on this to keep "MCP unavailable" reserved for transport
+    // failures.
+    err.isMcpToolError = true;
+    throw err;
+  }
   return result && result.id ? result.id : null;
 }
 
@@ -1576,7 +1855,7 @@ ${opening}
 
 ### What you MUST do with Meko tools
 
-- **agent_id**: use "${resolvedAgentId}" verbatim for every Meko MCP tool call in this session. This was derived from the cwd as \`<client>:<repo-basename>\` so memories stay scoped to this project. For genuinely cross-project facts (user identity, global preferences) pass agent_id="${COMMON_BUCKET_AGENT_ID}" — that's the common bucket any agent can read regardless of project.
+- **agent_id**: use "${resolvedAgentId}" verbatim for every Meko MCP tool call in this session. Project-scoped ids have the shape \`<client>:<repo-basename>\`, where the repo root is found by walking parents of the session cwd for \`.git\`, so memories stay scoped to this repo; sessions outside any repo use the bare client name (e.g. \`claude_code\`) rather than a colliding directory basename. A resumed session, or one that re-fires SessionStart (\`/clear\`, \`/compact\`), keeps the bucket its conversation already belongs to, and \`MEKO_AGENT_ID\` overrides either — so take the value above as given rather than re-deriving it yourself. For genuinely cross-project facts (user identity, global preferences) pass agent_id="${COMMON_BUCKET_AGENT_ID}" — that's the common bucket any agent can read regardless of project.
 - **conversation_id**: Use "${convId}" for all MCP tool calls that accept it
 
 ### Memory capture is automatic only when hook delivery succeeds — do NOT proactively call memory_add
@@ -1601,9 +1880,17 @@ Never write memories to local files (e.g., ~/.claude/projects/.../memory/). Meko
 function buildSessionStartFallbackContext(agentId, opts) {
   const resolvedAgentId = agentId || COMMON_BUCKET_AGENT_ID;
   const datapackBlock = buildActiveDatapackBlock(opts && opts.datapackPin ? opts.datapackPin : null);
+  // MEKO-592: the "server unreachable" preamble is the wrong story when the
+  // server accepted the call and told us to pin a datapack. Callers pass
+  // reason:"datapack_required" to swap it for setup guidance the agent can
+  // act on.
+  const reason = opts && opts.reason;
+  const preamble = reason === "datapack_required"
+    ? "The SessionStart hook reached the Meko MCP server, but no datapack is pinned for this project, so the server declined to create a conversation. **Automatic conversation capture is idle**. Use `datapack_list` to find a datapack id, then invoke the `meko-select-datapack` skill (or your client's equivalent) to pin it. The next drain picks up the fresh pin and starts capturing this session's queued turns; until then, save facts explicitly."
+    : "The SessionStart hook could not reach the Meko MCP server to create a conversation. **Automatic conversation capture is NOT running this session**, so the server-side extraction that normally saves memories for you will not fire. Fall back to saving facts explicitly.";
   return `## Meko Memory Instructions
 
-The SessionStart hook could not reach the Meko MCP server to create a conversation. **Automatic conversation capture is NOT running this session**, so the server-side extraction that normally saves memories for you will not fire. Fall back to saving facts explicitly.
+${preamble}
 
 ### What you should do while capture is down
 
@@ -1685,7 +1972,14 @@ async function handleSessionStart(hookInput) {
   const sessionId = extractSessionId(hookInput, transcriptPath);
 
   const source = hookInput.source || "";
-  const derivedAgentId = resolveSessionAgentId(transcriptPath, hookInput);
+  const sessionCwd = pickSessionCwd(transcriptPath, hookInput);
+  const derivedAgentId = resolveSessionAgentId(transcriptPath, hookInput, sessionCwd);
+  const legacyAgentId = deriveLegacyAgentId({
+    client: resolveHookClient(),
+    cwd: sessionCwd,
+    envOverride: process.env.MEKO_AGENT_ID,
+  });
+  logAgentIdDerivation(sessionCwd, derivedAgentId);
   const workspaceKey = workspaceKeyFromHookInput(hookInput, transcriptPath);
 
   // Check if watermark already exists (same session ID re-fires SessionStart, e.g. /clear, /compact)
@@ -1697,7 +1991,7 @@ async function handleSessionStart(hookInput) {
         `[meko-capture] SessionStart: corrupt watermark for ${sessionId} (${existing.error}); blocking.\n`,
       );
       const context = withHealthNotice(buildSessionStartFallbackContext(derivedAgentId, {
-        datapackPin: readDatapackPin(derivedAgentId),
+        datapackPin: readDatapackPin(derivedAgentId, legacyAgentId),
       }));
       process.stdout.write(hookOutput(context));
       return;
@@ -1737,6 +2031,7 @@ async function handleSessionStart(hookInput) {
       // conversation_id) and inject context under the actual owner so nothing
       // is written to the wrong namespace; a later hook retries the rebucket.
       if (owned.hold) {
+        logEffectiveAgentId(derivedAgentId, existing.agent_id, "watermark-hold");
         const holdContext = buildSessionStartContext(
           existing.conversation_id,
           sessionId,
@@ -1750,6 +2045,7 @@ async function handleSessionStart(hookInput) {
         return;
       }
       const resumedAgentId = owned.agentId;
+      logEffectiveAgentId(derivedAgentId, resumedAgentId, "watermark-reconcile");
       const resumedConvId = owned.convId;
       // Persist the corrected identity + conversation (+ provenance) so the
       // checkpoint / PreCompact / SessionEnd hooks read a consistent watermark
@@ -1823,6 +2119,7 @@ async function handleSessionStart(hookInput) {
       // watermark for this resumed session (no owner we can safely write under)
       // — inject context under the prior owner and let a later hook retry.
       if (owned.hold) {
+        logEffectiveAgentId(derivedAgentId, prior.agent_id, "resume-hold");
         const holdContext = buildSessionStartContext(
           prior.conversation_id,
           sessionId,
@@ -1837,6 +2134,7 @@ async function handleSessionStart(hookInput) {
         return;
       }
       const resumedAgentId = owned.agentId;
+      logEffectiveAgentId(derivedAgentId, resumedAgentId, "resume-reconcile");
       const resumedConvId = owned.convId;
       // On a fresh rebucketed conversation, start the watermark at 0 so this
       // session's turns replay into it. Otherwise keep currentLineCount so the
@@ -1878,7 +2176,7 @@ async function handleSessionStart(hookInput) {
   // Intent-first: durable outbox BEFORE any network call so create failures
   // leave a recoverable needs_conversation state (Capture V2).
   const transcriptMetadata = peekTranscriptMetadata(transcriptPath);
-  const datapackPin = readDatapackPin(agentId);
+  const datapackPin = readDatapackPin(agentId, legacyAgentId);
   const agentIdSource = (process.env.MEKO_AGENT_ID || "").trim() ? "explicit" : "derived";
   if (sessionId) {
     const intent = captureState.writeSessionIntent(sessionId, {
@@ -1908,9 +2206,38 @@ async function handleSessionStart(hookInput) {
       datapackPin && datapackPin.datapack_id,
     );
   } catch (err) {
-    process.stderr.write(`[meko-capture] SessionStart: MCP unavailable (${err.message}). Falling back to agent-driven setup.\n`);
-    let context = withHealthNotice(buildSessionStartFallbackContext(agentId, { datapackPin: readDatapackPin(agentId) }));
+    // MEKO-592: distinguish "server unreachable" (network/init failure) from
+    // "server accepted the call and told us to pin a datapack". The latter
+    // is user action, not a server outage — logging it as "MCP unavailable"
+    // sends the reporter down the wrong troubleshooting path.
+    const isDatapackRequired = err && err.code === "datapack_id_required";
+    if (isDatapackRequired) {
+      process.stderr.write(
+        `[meko-capture] SessionStart: no datapack pinned; auto-capture is idle. Pin one with datapack_list + meko-select-datapack; the next drain picks up the fresh pin.\n`,
+      );
+    } else if (err && err.isMcpToolError) {
+      // Server accepted the call and returned a structured error (e.g.
+      // invalid_metadata, create_failed). It is not "MCP unavailable"; print
+      // the code so the reporter isn't sent down the network path. Node
+      // system errors (ECONNREFUSED, ETIMEDOUT) also carry `.code`, so we
+      // gate on the marker set by createConversation.
+      process.stderr.write(
+        `[meko-capture] SessionStart: server rejected conversation_create (${err.code}: ${err.detail || err.message}). Falling back to agent-driven setup.\n`,
+      );
+    } else {
+      process.stderr.write(`[meko-capture] SessionStart: MCP unavailable (${err.message}). Falling back to agent-driven setup.\n`);
+    }
+    const contextOpts = { datapackPin: readDatapackPin(agentId, legacyAgentId) };
+    if (isDatapackRequired) contextOpts.reason = "datapack_required";
+    let context = withHealthNotice(buildSessionStartFallbackContext(agentId, contextOpts));
     if (sessionId) {
+      // MEKO-592: state was written by writeSessionIntent above with
+      // `delivery: "needs_conversation"`, which is the Capture V2 marker
+      // that `recover` and drain look for. Don't overwrite it here - the
+      // first drain classifies the failure and updates the health bucket.
+      // The prior `status: "action_required"` cache write was dead code
+      // (nothing reads the session cache for `--capture-status`), so keep
+      // `"error"` and leave the health signal to state on the next drain.
       try {
         writeSessionCache(sessionId, {
           status: "error",
@@ -1929,7 +2256,9 @@ async function handleSessionStart(hookInput) {
 
   if (!convId) {
     process.stderr.write("[meko-capture] SessionStart: conversation_create returned no ID.\n");
-    let context = withHealthNotice(buildSessionStartFallbackContext(agentId, { datapackPin: readDatapackPin(agentId) }));
+    let context = withHealthNotice(buildSessionStartFallbackContext(agentId, {
+      datapackPin: readDatapackPin(agentId, legacyAgentId),
+    }));
     if (sessionId) {
       try {
         writeSessionCache(sessionId, {
@@ -2006,10 +2335,24 @@ function persistExchangeCheckpoint(sessionId, state, nextLine, extras) {
     failure_class: null,
     last_error: null,
     blocked_reason: null,
+    last_failure_scope: null,
     last_success_at: new Date().toISOString(),
+    consecutive_exchange_drops:
+      extras.consecutive_exchange_drops != null
+        ? extras.consecutive_exchange_drops
+        : 0,
     in_flight: { seed: null, user_line: null, user_turn_id: null },
   };
   if (extras.lifecycle) next.lifecycle = extras.lifecycle;
+  if (extras.dropped_exchanges != null) {
+    next.dropped_exchanges = extras.dropped_exchanges;
+  }
+  if (extras.last_drop_reason !== undefined) {
+    next.last_drop_reason = extras.last_drop_reason;
+  }
+  if (extras.last_success_at !== undefined) {
+    next.last_success_at = extras.last_success_at;
+  }
   if (extras.agent_id != null) next.agent_id = extras.agent_id;
   if (extras.agent_id_source != null) next.agent_id_source = extras.agent_id_source;
   if (extras.conversation_id != null) next.conversation_id = extras.conversation_id;
@@ -2146,6 +2489,7 @@ async function drainSession(options) {
           last_error: null,
           last_success_at: null,
           blocked_reason: null,
+          consecutive_exchange_drops: 0,
         };
     const transcriptPath =
       opts.transcript_path ||
@@ -2164,10 +2508,16 @@ async function drainSession(options) {
     const retryAtMs = state.next_retry_at
       ? Date.parse(state.next_retry_at)
       : NaN;
+    const nowMs = Date.now();
+    const persistentRetryDue =
+      state.failure_class === "persistent" &&
+      state.last_failure_scope === "exchange" &&
+      Number.isFinite(retryAtMs) &&
+      retryAtMs <= nowMs;
     if (
       state.failure_class &&
       Number.isFinite(retryAtMs) &&
-      retryAtMs > Date.now() &&
+      retryAtMs > nowMs &&
       !(Boolean(opts.force_retry) && state.failure_class === "persistent")
     ) {
       return makeDrainResult({
@@ -2198,10 +2548,26 @@ async function drainSession(options) {
     let convId = state.conversation_id || "";
     let lastLine = state.last_line_number || 0;
     const currentLines = countLines(transcriptPath);
-    const datapackPin = datapackPinFromWatermark({
+    let datapackPin = datapackPinFromWatermark({
       datapack_id: state.datapack_id,
       datapack_name: state.datapack_name,
     });
+
+    // MEKO-592: SessionStart freezes state.datapack_id at the value the pin
+    // resolved to when the session opened. If the session started before the
+    // user pinned a datapack, that value is null and every drain here would
+    // resend it, hitting datapack_id_required against the guarded server on
+    // every retry. Re-read the pin file when state has none so a mid-session
+    // pin actually recovers this session's queued turns instead of forcing
+    // the user to start a fresh session.
+    if (!datapackPin && (state.agent_id || "").trim()) {
+      const freshPin = readDatapackPin(state.agent_id);
+      if (freshPin && freshPin.datapack_id) {
+        datapackPin = freshPin;
+        state.datapack_id = freshPin.datapack_id;
+        state.datapack_name = freshPin.datapack_name || null;
+      }
+    }
 
     let effectiveAgentId = state.agent_id || "";
     let effectiveSource = state.agent_id_source || "";
@@ -2270,14 +2636,19 @@ async function drainSession(options) {
         }
       }
     } catch (err) {
-      const failureClass = captureState.classifyFailure(err);
+      const persistent = classifyPersistentCaptureFailure(err);
+      const failureClass = persistent
+        ? "persistent"
+        : captureState.classifyFailure(err);
+      const failureText = persistentFailureText(persistent, err.message);
       const pendingExchanges = extractExchanges(transcriptPath, lastLine).length;
       // Only persist failure onto an existing outbox — never invent a watermark
       // just because initialize failed (SessionStart owns intent creation).
       if (stateExisted) {
         state.delivery = failureClass === "transient" ? "retry_wait" : "blocked";
         state.failure_class = failureClass;
-        state.last_error = err.message;
+        state.last_error = failureText;
+        state.last_failure_scope = persistent ? persistent.scope : null;
         state.attempt_count = (state.attempt_count || 0) + 1;
         state.next_retry_at = captureState.nextRetryAt({
           failure_class: failureClass,
@@ -2287,14 +2658,14 @@ async function drainSession(options) {
         captureState.writeState(sessionId, state);
       }
       process.stderr.write(
-        `[meko-capture] Failed to initialize MCP session: ${err.message}\n`,
+        `[meko-capture] Failed to initialize MCP session: ${failureText}\n`,
       );
       return makeDrainResult({
         status: failureClass === "transient" ? "retry_wait" : "blocked",
         session_id: sessionId,
         queued_remaining: pendingExchanges,
         failure_class: failureClass,
-        error: err.message,
+        error: failureText,
         last_line_number: lastLine,
         lifecycle: state.lifecycle,
         delivery: stateExisted ? state.delivery : "needs_conversation",
@@ -2416,6 +2787,19 @@ async function drainSession(options) {
     const exchanges = allExchanges.slice(0, maxBatch);
     let captured = 0;
     let failed = 0;
+    let dropped = 0;
+    // Exchange-scoped HTML 403s may be payload-specific OR request-wide.
+    // Allow one consecutive drop without an intervening success so a single
+    // XSS turn cannot wedge the session; a second consecutive one holds the
+    // queue because it may be a session-wide edge block.
+    let consecutiveExchangeDrops = Number.isInteger(
+      state.consecutive_exchange_drops,
+    )
+      ? state.consecutive_exchange_drops
+      : 0;
+    // Consume the backoff drop on the first exchange of this drain, success
+    // or failure, so a later HTML 403 in the same batch cannot also skip.
+    let allowExchangeDropAfterBackoff = persistentRetryDue;
     let cursorAdvanced = false;
     let watermarkLine = extractFrom;
     state.delivery = "draining";
@@ -2423,6 +2807,8 @@ async function drainSession(options) {
     captureState.writeState(sessionId, state);
 
     for (const exchange of exchanges) {
+      const canDropAfterBackoff = allowExchangeDropAfterBackoff;
+      allowExchangeDropAfterBackoff = false;
       const seed = `${convId}:${exchange.user_uuid}`;
       state.in_flight = {
         seed,
@@ -2446,13 +2832,13 @@ async function drainSession(options) {
             : exchange.next_line_number != null
               ? exchange.next_line_number
               : safeLine;
-        const remainingAfter = allExchanges.length - captured - 1;
+        const remainingAfter = allExchanges.length - captured - dropped - 1;
         const ck = persistExchangeCheckpoint(sessionId, state, nextLine, {
           delivery:
             remainingAfter > 0 || allExchanges.length > maxBatch
               ? "pending"
               : "idle",
-          queued_exchanges: Math.max(0, allExchanges.length - captured - 1),
+          queued_exchanges: Math.max(0, remainingAfter),
           agent_id: effectiveAgentId,
           agent_id_source: effectiveSource,
           conversation_id: convId,
@@ -2485,32 +2871,105 @@ async function drainSession(options) {
         state = ck.state;
         watermarkLine = state.last_line_number;
         captured++;
+        consecutiveExchangeDrops = 0;
         cursorAdvanced = true;
       } catch (err) {
+        const persistent = classifyPersistentCaptureFailure(err, {
+          exchange: true,
+        });
+
+        // An exchange-scoped persistent rejection *may* be deterministic for
+        // this exchange only (edge filtering matched a signature inside the
+        // transcript text). Holding forever behind a true payload rejection
+        // wedges the rest of the session (#13). HTML 403 alone is not proof
+        // it is payload-specific — request-wide edge blocks share that shape
+        // — so allow at most one consecutive drop without an intervening
+        // success; a second consecutive failure holds for retry.
+        if (
+          persistent &&
+          persistent.scope === "exchange" &&
+          (consecutiveExchangeDrops < 1 || canDropAfterBackoff)
+        ) {
+          const boundary = boundaryAfterExchange(turnLines, exchange.user_line);
+          const nextLine =
+            boundary != null
+              ? boundary
+              : exchange.next_line_number != null
+                ? exchange.next_line_number
+                : safeLine;
+          const remainingAfter =
+            allExchanges.length - captured - dropped - 1;
+          const drop = persistExchangeCheckpoint(sessionId, state, nextLine, {
+            delivery:
+              remainingAfter > 0 || allExchanges.length > maxBatch
+                ? "pending"
+                : "idle",
+            queued_exchanges: Math.max(0, remainingAfter),
+            // Nothing was stored, so the last-success stamp must not move.
+            last_success_at: state.last_success_at || null,
+            dropped_exchanges: (state.dropped_exchanges || 0) + 1,
+            last_drop_reason: persistent.reason,
+            consecutive_exchange_drops: consecutiveExchangeDrops + 1,
+            agent_id: effectiveAgentId,
+            agent_id_source: effectiveSource,
+            conversation_id: convId,
+            datapack_id: datapackPin ? datapackPin.datapack_id : null,
+            datapack_name: datapackPin ? datapackPin.datapack_name : null,
+          });
+          if (drop.ok) {
+            state = drop.state;
+            watermarkLine = state.last_line_number;
+            dropped++;
+            consecutiveExchangeDrops = state.consecutive_exchange_drops;
+            cursorAdvanced = true;
+            process.stderr.write(
+              `[meko-capture] Dropped un-storable exchange (uuid=${exchange.user_uuid}): ` +
+                `${persistent.reason}. Cursor advanced to line ${watermarkLine}; ` +
+                `capture continues for the rest of this session.\n`,
+            );
+            continue;
+          }
+          // Cursor advance itself failed — fall through and hold, rather than
+          // losing the exchange without a durable record that it was dropped.
+          process.stderr.write(
+            `[meko-capture] Could not record dropped exchange (uuid=${exchange.user_uuid}): ${drop.error}\n`,
+          );
+        } else if (persistent && persistent.scope === "exchange") {
+          process.stderr.write(
+            `[meko-capture] Holding after consecutive edge 403s (uuid=${exchange.user_uuid}): ` +
+              `${persistent.reason}. A second consecutive HTML 403 without an ` +
+              `intervening success may be request-wide; queue is held for retry.\n`,
+          );
+        }
+
         failed++;
-        const persistent = classifyPersistentCaptureFailure(err);
         const failureClass = persistent
           ? "persistent"
           : captureState.classifyFailure(err);
         state.delivery =
           failureClass === "transient" ? "retry_wait" : "blocked";
         state.failure_class = failureClass;
-        state.last_error = err.message;
+        // Prefer the classifier reason so quota/entitlement text survives into
+        // state and SessionStart notices instead of an opaque http_403.
+        state.last_error = persistentFailureText(persistent, err.message);
+        state.last_failure_scope = persistent ? persistent.scope : null;
         state.attempt_count = (state.attempt_count || 0) + 1;
         state.next_retry_at = captureState.nextRetryAt({
           failure_class: failureClass,
           attempt_count: state.attempt_count,
         });
-        state.queued_exchanges = allExchanges.length - captured;
+        state.queued_exchanges = allExchanges.length - captured - dropped;
         captureState.writeState(sessionId, state);
         process.stderr.write(
-          `[meko-capture] Failed to add message (uuid=${exchange.user_uuid}): ${err.message}\n`,
+          `[meko-capture] Failed to add message (uuid=${exchange.user_uuid}): ${state.last_error}\n`,
         );
         break;
       }
     }
 
-    const held = allExchanges.length - captured;
+    // Dropped exchanges are resolved, not held: they can never be stored, so
+    // they must not count as backlog or the session reads as permanently behind.
+    const held = allExchanges.length - captured - dropped;
     if (failed === 0 && allExchanges.length <= maxBatch && pendingFromLine === null) {
       watermarkLine = safeLine;
       if (watermarkLine >= state.last_line_number) {
@@ -2528,7 +2987,8 @@ async function drainSession(options) {
         state.queued_exchanges = 0;
       }
       captureState.writeState(sessionId, state);
-      cursorAdvanced = captured > 0 || cursorAdvanced || synthesizedInterrupted;
+      cursorAdvanced =
+        captured > 0 || dropped > 0 || cursorAdvanced || synthesizedInterrupted;
     } else if (failed === 0 && allExchanges.length > maxBatch) {
       state.delivery = "pending";
       state.queued_exchanges = held;
@@ -2541,6 +3001,13 @@ async function drainSession(options) {
       process.stderr.write(
         `[meko-capture] capture stopped at first failure; ` +
           `holding watermark at line ${state.last_line_number} for retry.\n`,
+      );
+    }
+
+    if (dropped > 0) {
+      process.stderr.write(
+        `[meko-capture] ${dropped} exchange(s) could not be stored and were ` +
+          `skipped so the rest of the session still captures.\n`,
       );
     }
 
@@ -2562,6 +3029,7 @@ async function drainSession(options) {
       status,
       session_id: sessionId,
       captured,
+      dropped,
       queued_remaining: held,
       failure_class: failed > 0 ? s.failure_class || null : null,
       error: failed > 0 ? s.last_error || null : null,
@@ -2688,6 +3156,7 @@ async function main() {
 
 module.exports = {
   deriveAgentId,
+  deriveLegacyAgentId,
   drainSession,
   makeDrainResult,
   boundaryAfterExchange,

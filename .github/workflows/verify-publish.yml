@@ -78,3 +78,8 @@ jobs:
 
       - name: Check skill markdown links resolve
         run: node scripts/publish-verify.mjs
+
+      # Mirrors Kiro's own power loader, which silently drops invalid servers
+      # and skills, plus the kiro.dev/powers/submit form's required fields.
+      - name: Verify Kiro powers
+        run: node scripts/kiro-power-verify.mjs
