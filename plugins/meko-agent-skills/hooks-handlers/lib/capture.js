@@ -1170,6 +1170,10 @@ function isMissingConversationError(err) {
  * re-extracted from the transcript on disk. Replay is safe because every turn
  * carries a deterministic `seed`, so the server dedupes anything that did land.
  *
+ * The new conversation is created without `session_id`. The server derives the
+ * id from `session_id`, so passing it again would return the conversation that
+ * just failed, and each "recovery" would replay the transcript into it.
+ *
  * On create failure the caller keeps its normal retry path, so a network blip
  * here costs a retry rather than the queue.
  *
@@ -1189,12 +1193,24 @@ async function recoverMissingConversation({
       agentId,
       peekTranscriptMetadata(transcriptPath),
       datapackId,
+      { freshId: true },
     );
   } catch (err) {
     return { ok: false, error: `conversation_create failed: ${err.message}` };
   }
   if (!newConvId) {
     return { ok: false, error: "conversation_create returned no ID" };
+  }
+  // Rebucketing onto the id that just failed would replay the whole transcript
+  // into it again, adding to a trace the server already can't read.
+  const sameId = (a, b) =>
+    String(a || "").replace(/-/g, "").toLowerCase() ===
+    String(b || "").replace(/-/g, "").toLowerCase();
+  if (sameId(newConvId, state.conversation_id)) {
+    return {
+      ok: false,
+      error: `conversation_create returned the missing conversation ${newConvId}`,
+    };
   }
   const rb = captureState.rebucket(state, newConvId);
   if (!rb.ok) {
@@ -1354,7 +1370,19 @@ async function fetchRecentMemories(agentId, datapackId = null, { limit = 10, bud
   return summaries;
 }
 
-async function createConversation(sessionId, agentId, metadata = null, datapackId = null) {
+/**
+ * The server derives the conversation id from `session_id`, so the same session
+ * always maps to the same conversation. Pass `freshId: true` to omit
+ * `session_id` and have the server mint a new id instead. Recovery needs this:
+ * re-creating with the session id returns the conversation that just failed.
+ */
+async function createConversation(
+  sessionId,
+  agentId,
+  metadata = null,
+  datapackId = null,
+  { freshId = false } = {},
+) {
   const clientLabel = {
     claude_code: "Claude Code",
     cursor: "Cursor",
@@ -1364,8 +1392,8 @@ async function createConversation(sessionId, agentId, metadata = null, datapackI
   const payload = {
     agent_id: agentId,
     title: `${clientLabel} session (auto-captured)`,
-    session_id: sessionId,
   };
+  if (!freshId) payload.session_id = sessionId;
   if (metadata) {
     payload.metadata = JSON.stringify({
       source: "hook",
