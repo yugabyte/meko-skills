@@ -49,12 +49,12 @@ echo '{"transcript_path":"/dev/null","cwd":"'"$PWD"'","source":"startup"}' \
 ```
 Look for the `### Active datapack` block in the JSON output's `additionalContext`. If present, the hook is fine and the test session has a different agent_id; if absent, the hook isn't reading your file.
 
-## Symptom: A pinned datapack returns "not found" when used
+## Symptom: A pinned datapack returns `datapack_access_denied` when used
 
-The pin became stale — the datapack was deleted in another client. Tell the user:
+The pin became stale: the datapack was deleted, or its share to you was revoked, in another client. The server checks ownership and shares on every call that passes a `datapack_id`, so the call fails with `datapack_access_denied` (older servers returned a not-found error). The check also fails closed on a transient server database error, so retry the call once before treating the pin as stale. Tell the user:
 
 ```
-The pinned datapack `<name>` (`<id>`) no longer exists on the server.
+The pinned datapack `<name>` (`<id>`) no longer exists or is no longer shared with you.
 Run `meko-select-datapack` to pick a fresh one, or `clear` to unpin.
 ```
 
@@ -81,7 +81,7 @@ The user has zero datapacks under their account. The skill's response:
 ```
 You don't have any datapacks yet. Create one with:
 
-  datapack_create(name="<your-datapack-name>")
+  datapack_create(name="<your-datapack-name>", conversation_id="<conversation id>")
 
 Or visit the Meko Cloud console (Datapacks → New datapack).
 ```

@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.1.0"
+  version: "3.2.0"
   tags: mcp, tools, datapack, memory, conversation, rag, meko
 ---
 <!--
@@ -24,9 +24,9 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide
 
-Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 24 MCP tools available in production.
+Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 25 MCP tools available in production.
 
-**Read this first.** On Claude Code, conversation capture is automatic (SessionStart / PreCompact / SessionEnd hooks) and the Meko server extracts durable memories from the captured turns on its own. Facts the user states in conversation are saved for you — you do **not** proactively call `memory_add` for them. Your active jobs are: **recall** what's already known (`memory_search`, `knowledgebase_search`), and the **few** save cases automatic extraction cannot reach. Details below.
+**Read this first.** On Claude Code, conversation capture is automatic (SessionStart / PreCompact / SessionEnd hooks) and the Meko server extracts durable memories from the captured turns on its own. Facts the user states in conversation are saved for you — you do **not** proactively call `memory_add` for them. Your active jobs are: **recall** what's already known (`context_search` first, then `memory_search` or `knowledgebase_search` for a single source), and the **few** save cases automatic extraction cannot reach. Details below.
 
 ## Non-negotiable operating contracts
 
@@ -36,8 +36,8 @@ Apply these rules before the longer guidance below. They are service-contract sa
 
 Inspect the response envelope before its contents:
 
-1. If `error` or an error-shaped `detail` is present, the search **failed** and its findings are **unknown**. Say exactly that. Never say "nothing was found," "no results," or "the store is empty."
-2. Do not retry quota (`free_tier_limit_reached`) or permission errors. Report the error and stop. Retry only documented transient failures, with a bounded backoff.
+1. If `error` or an error-shaped `detail` is present, or the whole response is an error string (for example `Error searching memories: ...` or `[Errno 111] Connection refused`), the search **failed** and its findings are **unknown**. Say exactly that. Never say "nothing was found," "no results," or "the store is empty."
+2. Do not retry quota (`free_tier_limit_reached`), permission (403), or validation errors. Report the error and stop. The one exception is `datapack_access_denied`: retry it once, because the server's access check also fails closed on a transient database error. Retry only documented transient failures (see `tools-troubleshooting.md`), with a bounded backoff. For `PAT_RATE_LIMITED`, wait out the retry-after (about 60s) before retrying.
 3. Only a successful response with an explicit empty `results` array proves a legitimate empty search.
 
 ### 2. Treat `memory_get_all` as a recent window, never an export
@@ -53,6 +53,7 @@ If no candidate supports an answer, abstain: say the retrieved evidence does not
 ### 4. Verify writes and enforce real isolation
 
 - A success-shaped write response is not proof. Read back memories and conversations. For artifacts, compute SHA-256 locally, require the matching `content_hash`, then read back important bytes. A missing hash means the upload is unconfirmed.
+- A read-back must use the same `datapack_id` as the write. Checking the default datapack after writing to a pinned one proves nothing.
 - `agent_id` attributes writes; it is not an access boundary. Put projects, tenants, or security domains that must not co-discover content in separate datapacks.
 
 ## `agent_id` — multi-agent identity
@@ -61,9 +62,11 @@ Use the SessionStart-injected `agent_id` verbatim. It normally has shape `<clien
 
 **Read scoping varies by tool:**
 - `memory_search` / `memory_get_all` — scoped to `(datapack_id, user_id)`; `agent_id` does not filter results. Do not fan out reads by agent.
-- `conversation_get` — agent-owned: pass the exact `agent_id` that created the conversation; any other value returns `agent_id_mismatch`.
+- `conversation_get`, `conversation_add_message`, `conversation_update`, `conversation_delete`: agent-owned. Pass the exact `agent_id` that created the conversation; any other value returns `agent_id_mismatch`.
+- `memory_delete_all`: deletes only the passed `agent_id`'s bucket, even though memory reads span every agent. A `memory_search` preview can show rows this call won't delete.
 - `conversation_list` — user/datapack scoped; `agent_id` is trace attribution only.
 - `knowledgebase_search` — datapack scoped; `agent_id` is ignored.
+- `context_search`: the memory and KB buckets follow the rules above. The conversation bucket is broader than both: it spans every user and agent on the datapack, and `agent_id` doesn't filter it.
 
 See `tools-agent-id-conventions.md` for the full model, including how promotion works and how to phrase broad-query responses to the user. Legacy IDs remain readable through the same personal-memory read.
 
@@ -91,6 +94,8 @@ Meko context (inherited from parent session):
 
 Reuse the inherited conversation unless the parent or user explicitly requests a fresh scope. Always reuse the inherited agent ID.
 
+Parallel subagents writing to one conversation have hit intermittent `not_found` or `agent_id_mismatch` ("conversation belongs to agent 'None'") on `conversation_add_message` right after `conversation_create`, while other subagents succeeded with identical arguments. Retry that call once with the same `seed` after a few seconds. If it still fails, don't create a replacement conversation: save the durable findings with `memory_add` and tell the parent the transcript for that subagent is incomplete.
+
 **You may be the subagent.** If no SessionStart context named a `conversation_id`, assume you are one and look for the block above in your prompt. If it is absent, do not guess, invent IDs, use the nil UUID, or write — ask the parent for both values.
 
 ## Core principle: capture is automatic — recall, don't re-store
@@ -107,7 +112,7 @@ Recall first; save only what capture cannot reach; never re-store a just-stated 
 | User corrects a prior fact | Capture adds the correction but may retain the old fact; find and update/delete the stale memory when it must not survive. |
 | User explicitly says "remember this" / "save this to memory" | `memory_add` (verbatim). This is the clearest explicit-save case. |
 | A durable fact appears only in assistant output or a tool result | `memory_add`; automatic extraction reads the user turn. |
-| User asks "what do you know about X?" | Search both production retrieval surfaces: `memory_search` for personal context, then `knowledgebase_search` for shared datapack knowledge when relevant. |
+| User asks "what do you know about X?" | `context_search`. One call returns separate memory, knowledge-base, and past-conversation buckets; report each. Confirm an empty memory or KB bucket with `memory_search` or `knowledgebase_search` before saying nothing is stored. |
 | User asks "what do we (as a team) know about X?" or about uploaded documents | `knowledgebase_search` (returns uploaded docs + promoted memories). |
 | User asks to share private memories | Follow the exact-ID `memory_promote` confirmation workflow below. |
 | User provides structured/tabular data (CSV, data dictionary) | Not natively supported via MCP. Point the user at the UI's Add Knowledge upload; do not `memory_add` row-by-row. |
@@ -135,6 +140,8 @@ memory_search(query="destructive <action type> preferences feedback",
 ```
 
 A single search covers all of this user's agents. Memory is supplemental evidence, not authorization: a relevant preference can require more caution, but an empty search never authorizes destruction. Follow host approval rules and prefer previews.
+
+If your host's policy doesn't let you run a Meko delete tool even when the user asks, say so plainly and hand the user what they need to do it themselves: the exact memory or conversation IDs, a one-line summary of each, and the tool call to run from a client that allows deletes. Don't report the data as deleted.
 
 ### Capture rules
 
@@ -164,6 +171,27 @@ Required parameters: `text`, `conversation_id`. On **writes**, `conversation_id`
 
 **Write one coherent fact per memory**, with the identifiers a later search will use — never a transcript or multi-topic dump; focused memories retrieve better and read far faster.
 
+### context_search: default first call for recall
+
+```
+context_search(
+               query="auth migration decisions",
+               agent_id="<your-agent-id>",
+               conversation_id="<session_conversation_id>",
+               datapack_id="<pinned datapack UUID, if any>")
+```
+
+Required parameters: `query`, `conversation_id`. It queries memory, the knowledge base, and the conversation-history cache in parallel and returns `{"results": {"memory": [...], "knowledge_base": [...], "conversation": {"hits": [...], "thread": [...]}}, "token_savings": {...}}`.
+
+- Read every bucket. A KB document can supersede a memory or a past conversation; nothing is hidden by another source's hit.
+- An empty bucket is ambiguous: either that source found nothing relevant, or it failed. `context_search` turns a failed source into an empty list and records the error only in the trace. Before you tell the user nothing is stored about X, confirm with `memory_search` or `knowledgebase_search`, which return errors.
+- A bucket is `null` only when that source wasn't queried: `force_source` excluded it, or the server couldn't build a query vector for it.
+- The conversation bucket is datapack-wide. It returns embedded turns from every user and agent on the datapack, and each hit carries its author's `user_id`. Don't present a hit as this user's own history.
+- `limit` bounds the memory and KB buckets only; the conversation bucket returns up to 10 hits plus a thread of whole turns.
+- The memory bucket has no similarity floor on the default path, so it can contain weak rows. Discount them against the other buckets instead of treating them as answers.
+- Set `force_source` to `"memory"`, `"knowledge_base"`, or `"conversation"` only when you already know the one source you need.
+- Use `memory_search` or `knowledgebase_search` directly when you need `run_id` filtering, the memory similarity floor, or exact document IDs for `knowledgebase_delete_document`.
+
 ### memory_search — correct call pattern
 
 ```
@@ -173,9 +201,9 @@ memory_search(
               conversation_id="<session_conversation_id>")
 ```
 
-Required parameters: `query`, `agent_id`, `conversation_id`. On **`memory_search`** specifically, `conversation_id` is used only for Langfuse trace nesting — it does NOT filter results. Pass the session's UUID so the search span appears under the active conversation in Observe; passing `""` is accepted and means "don't nest under any trace."
+Required parameters: `query`, `conversation_id`. On **`memory_search`** specifically, `conversation_id` is used only for Langfuse trace nesting — it does NOT filter results. Pass the session's UUID so the search span appears under the active conversation in Observe. Never pass `""`: production `memory_search` currently fails on an empty value (MEKO-707). If you have no conversation yet, pass a freshly generated 32-character lowercase hex id (a UUID with the hyphens removed); on a read it only nests the trace.
 
-`agent_id` does not filter what `memory_search` returns — one call covers every agent's rows for this user, including the `meko_agent` bucket (see Read scoping above).
+`agent_id` does not filter what `memory_search` returns — one call covers every agent's rows for this user, including the `meko_agent` bucket (see Read scoping above). Results below a server-configured similarity floor (default 0.2) are dropped, so an empty `results` list can mean "only weak matches", not "nothing stored".
 
 Evidence going into reasoning follows operating contract 3 (retrieve ≤ ~25, pass ≤ ~10).
 
@@ -194,7 +222,7 @@ knowledgebase_search(
                      limit=10)
 ```
 
-Required parameters: `query`, `agent_id`, `conversation_id`, `datapack_id`. `datapack_id` has no default here. `agent_id` is ignored for filtering — results are the team's shared knowledge on the datapack regardless of what you pass.
+Required parameters: `query`, `conversation_id`, `datapack_id`. `datapack_id` has no default here. `agent_id` is ignored for filtering — results are the team's shared knowledge on the datapack regardless of what you pass.
 
 For recalling working memories — especially recently-changed facts — prefer `memory_search`; the knowledge base is the team's publish/archive surface.
 
@@ -215,7 +243,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 ### Critical parameter rules
 
 - **agent_id**: Per-session value, injected via `additionalContext` by the SessionStart hook. Shape: `<client>:<repo-basename>`. Pass verbatim on project-scoped writes and reads. Pass `"meko_agent"` for the cross-project common bucket (or empty/omit — server rewrites empty to `meko_agent`). Ignored on `knowledgebase_search`. See `tools-agent-id-conventions.md`.
-- **conversation_id**: the conversation's ID *is* its trace ID, so every call carrying it becomes a span under that conversation in the Observe hub. On write tools (`memory_add`, `conversation_add_message`) pass a real UUID from `conversation_create` or the SessionStart hook — a nil/empty value orphans the trace. On `memory_search` it only nests the trace (it does not filter), and empty-string is accepted; on `memory_get_all` and most read tools, still pass the session UUID when you have one. Never pass `"current"` or other non-UUID junk.
+- **conversation_id**: the conversation's ID *is* its trace ID, so every call carrying it becomes a span under that conversation in the Observe hub. On write tools (`memory_add`, `conversation_add_message`) pass a real UUID from `conversation_create` or the SessionStart hook — a nil/empty value orphans the trace. On read tools it only nests the trace (it does not filter), but it must still be a 32-hex id: `memory_search` fails on `""`, and most other tools reject it with `conversation_id_required`. Never pass `"current"` or other non-UUID junk.
 - **When in doubt about optional parameters, omit them.** The server has sensible defaults.
 
 ### Verify after writing
@@ -223,7 +251,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 Never confirm a successful save to the user without first validating via a read-back. `{"status": "accepted"}` or HTTP 200 from a write tool is not proof of persistence — indexing lag, silent server errors, and wrong-datapack routing all surface as "the write looked fine but nothing is there." Always read back before reporting success.
 
 - **After `memory_add`**: call `memory_search` with a distinctive token from the stored text (a name, UUID, rare phrase — not a common word). Assert the new memory appears in the results. Only then tell the user it was saved.
-- **After `conversation_add_message`**: call `conversation_get(include_messages=true)` with the returned `conversation_id`. Assert `message_count` > 0 and that the new message is in the returned list.
+- **After `conversation_add_message`**: call `conversation_get(include_messages=true)` with the returned `conversation_id`. Assert `message_count` > 0 and that the new message is in the returned list. On very long conversations whose trace is too large for Langfuse, `conversation_get` can fail even though the write landed. Report that verification was not possible instead of re-posting or recreating the conversation.
 - **After `artifact_put`**: operating contract 4 — the locally-computed SHA-256 must match the returned `content_hash` (a rate-limited or errored put carries **none**); read back important artifacts via `artifact_get` and compare bytes.
 - **On verification failure**: tell the user the save did not succeed — do **not** claim it did. Include the verification-failure detail (empty search, missing message, HTTP error) so they can act — wrong datapack, scope mismatch, expired API key are the common causes.
 
@@ -248,13 +276,13 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 ## Budgeting calls
 
-`memory_add` takes ~10s for a one-line fact and ~20-30s for document-sized text; `memory_search` ~2-6s. Sustained bulk ingest throttles to roughly per-call latency — run large ingests as background jobs. `memory_search`, `knowledgebase_search`, and `memory_add` also draw from **lifetime per-user quotas** on Free/Standard tiers, so budget latency *and* call count. `datapack_id` is optional on most tools (default datapack) but **required** on `knowledgebase_search`. See `tools-known-limitations.md`.
+`memory_add` takes ~10s for a one-line fact and ~20-30s for document-sized text; `memory_search` ~2-6s. Sustained bulk ingest throttles to roughly per-call latency — run large ingests as background jobs. `memory_search`, `knowledgebase_search`, and `memory_add` also draw from **lifetime per-user quotas** on Free/Standard tiers, and `context_search` and `conversation_add_message` on the Free tier, so budget latency *and* call count. `datapack_id` is optional on most tools (default datapack) but **required** on `knowledgebase_search`. See `tools-known-limitations.md`.
 
 ## Reference sections
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 24 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 25 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-datapack-workflow.md` | Datapack lifecycle and datapack_id routing |

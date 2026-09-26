@@ -1869,7 +1869,7 @@ Call memory_add (with the session's agent_id + conversation_id) ONLY for the nar
 
 ### Recall and before destructive actions
 
-- User asks "what do you know about X?" → call memory_search first.
+- User asks "what do you know about X?" → call context_search first (memory, knowledge base, and past conversations in one call). Confirm an empty memory or knowledge-base result with memory_search or knowledgebase_search before saying nothing is stored.
 - Before any action that deletes, overwrites, or restructures user content (Write-overwrite, large Edit deletions, rm, git reset --hard, destructive SQL), call memory_search for relevant feedback and confirm with the user if any prior guidance applies.
 
 ### Use Meko, not local storage
@@ -1902,7 +1902,7 @@ ${preamble}
 Because nothing is capturing this session, explicit saves are the only path — this is the exception, not the normal mode:
 - User shares personal info, preferences, or role → call memory_add immediately
 - User shares org conventions or team standards → call memory_add immediately
-- User asks "what do you know about X?" → call memory_search first
+- User asks "what do you know about X?" → call context_search first
 
 ### Use Meko, not local storage
 

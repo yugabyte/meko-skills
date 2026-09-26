@@ -38,13 +38,15 @@ Note that the upstream Go source (the `Datapack` struct in `api_server/internal/
 
 ## Other fields the live response includes
 
-Beyond the columns the skill renders by default, `datapack_list` returns counts that may be useful in some flows:
+`datapack_list` doesn't compute counts; its list response carries no count fields. If the user asks for counts, call `datapack_describe(datapack_id=<id>, conversation_id="<conversation id>")` and read them from that response:
 
-- `memory_count` — total memories the caller has under this datapack (per `(user_id, agent_id)` scoping).
-- `knowledge_count` — knowledge-base entries on the datapack.
-- `learnings_count` — promoted-to-shared memories on the datapack.
+- `memory_count`: all memories stored in the datapack.
+- `collective_memory_count`: memories promoted to shared knowledge.
+- `learnings_count`: memories awaiting a promotion decision.
+- `knowledge_base_file_count`: uploaded KB documents (`null` if the status endpoint is unreachable).
+- `knowledge_chunk_count`: KB chunks across all documents. `knowledge_count` is a deprecated alias.
 
-These aren't in the spec column set. Don't add them silently. If the user asks for counts, render them on request — and read the numbers from the live response, never invent them.
+Don't add counts to the table silently, and never invent the numbers.
 
 ## Sharing UI vs API state
 

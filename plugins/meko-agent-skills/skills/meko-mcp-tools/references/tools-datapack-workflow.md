@@ -64,7 +64,7 @@ Delete child resources first (agents and KB sources via the control plane), then
 ```
 # Control-plane (REST or UI): DELETE /datapacks/:datapack_id/knowledge-bases
 # Control-plane (REST or UI): DELETE /datapacks/:datapack_id/agents/sales_agent
-datapack_delete(datapack_id="dp-uuid-123")  # MCP-exposed, destructive, irreversible
+datapack_delete(datapack_id="dp-uuid-123", conversation_id="<conversation id>")  # MCP-exposed, destructive, irreversible
 ```
 
 ## Common mistake: forgetting datapack_id on memory tools

@@ -65,7 +65,7 @@ Filter tuple: `(datapack_id, user_id)`. `agent_id` is **not** applied on memory 
 
 ### Personal conversation reads — `conversation_get`, `conversation_list`
 
-- `conversation_get` — agent-owned. Filter tuple `(datapack_id, user_id, agent_id)`: pass the exact `agent_id` that created the conversation; a wrong value returns `agent_id_mismatch`.
+- `conversation_get`, `conversation_add_message`, `conversation_update`, `conversation_delete` — agent-owned. Filter tuple `(datapack_id, user_id, agent_id)`: pass the exact `agent_id` that created the conversation; a wrong value returns `agent_id_mismatch`.
 - `conversation_list` — **not** agent-filtered. It lists by `(datapack_id, user_id)` only; `agent_id` on the call is trace-attribution only (like memory reads), so one call returns the datapack's conversations for your user regardless of which agent created them.
 
 ### Team-shared reads — `knowledgebase_search`
@@ -104,13 +104,12 @@ knowledgebase_search(agent_id=anything, query=...)
 
 ## When to use what — broad-query guidance
 
-If the user asks "what do you know about X?": one `memory_search` covers the whole personal surface (every `agent_id`, nothing to fan out), then `knowledgebase_search` for team-shared knowledge. Tell the user which surface each finding came from.
+If the user asks "what do you know about X?": one `context_search` returns the whole personal memory surface (every `agent_id`, nothing to fan out), team-shared knowledge, and matching past-conversation turns in separate buckets. Tell the user which surface each finding came from. Conversation hits can come from other users on the datapack.
 
 ## Optional sub-scoping
 
 Optional parameters can narrow a call further:
-- `user_id` — explicitly scope writes/reads to a specific end-user if your agent serves multiple (rare in Claude Code; more common in API products)
-- `run_id` — on `memory_search` and the delete tools it is a **read/delete
+- `run_id` — on `memory_search` and `memory_delete_all` it is a **read/delete
   filter** on the row's `meko_conversation_id`, so pass a *conversation id* to
   scope the call to that conversation (consistent scoping landed in
   MEKO-473/MEKO-474, #271). On `memory_add` it is Langfuse trace metadata only
@@ -118,10 +117,10 @@ Optional parameters can narrow a call further:
   `conversation_id` — a row written with `memory_add(run_id=X)` is not findable
   via `memory_search(run_id=X)`.
 
-Available on `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all`, `conversation_create`, `conversation_list`.
+Accepted by `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all`, and `conversation_create`. `memory_get_all` ignores it. No tool takes a `user_id` argument; the server resolves it from your credentials (see `tools-user-id-conventions.md`).
 
 ## Things I checked and found in-data on real Cloud datapacks
 
 - `agent_id="agent"` appears on many legacy rows — it was the previous canonical constant. New writes should use the schema in the table above; memory reads still return the legacy rows.
-- Memory Summary UI (`/datapacks/<name>/memory-summary`) is agent-id-agnostic — shows every row in the datapack, renders the stored `agent_id` as a badge. `memory_search` and `conversation_list` are likewise agent-agnostic (they return all your agents' rows for the user); only `conversation_get` enforces `agent_id` (agent ownership).
+- Memory Summary UI (`/datapacks/<name>/memory-summary`) is agent-id-agnostic — shows every row in the datapack, renders the stored `agent_id` as a badge. `memory_search` and `conversation_list` are likewise agent-agnostic (they return all your agents' rows for the user); the conversation calls (`conversation_get`, `conversation_add_message`, `conversation_update`, `conversation_delete`) enforce `agent_id` (agent ownership), and `memory_delete_all` deletes only the passed `agent_id`'s bucket.
 - Subagents spawned via the `Agent` tool in Claude Code do not automatically inherit the parent's `agent_id`. The parent must inject it into the spawn prompt. See the SKILL.md "When spawning subagents" section.

@@ -20,6 +20,47 @@ Every tool example below shows the correct parameters, expected response, and co
 
 ---
 
+## Retrieval
+
+### context_search
+
+Default first call for open-ended recall ("what do you know about X?"). One call queries memory, the knowledge base, and the conversation-history cache in parallel.
+
+```
+context_search(
+    query="auth migration decisions",
+    agent_id="claude_desktop",
+    conversation_id="<session conversation id>",
+    datapack_id="<datapack UUID>")
+```
+
+Required: `query`, `conversation_id`. `datapack_id` is optional (default datapack if omitted); pass the pinned id when you have one.
+
+Response:
+
+```
+{
+  "results": {
+    "memory": [{"id": "...", "memory": "...", "score": 0.51, ...}],
+    "knowledge_base": [{"id": "...", "chunk_text": "...", "document_id": "...", "distance": 0.31, "match_type": "hybrid", ...}],
+    "conversation": {"hits": [...], "thread": [...]}
+  },
+  "token_savings": {"total_tokens": 49000, "memory": {"tokens_sent": 600, "tokens_saved": 48400}, "tokens_saved": 48400}
+}
+```
+
+- A bucket is `null` only when that source wasn't queried: `force_source` excluded it, or the server couldn't build a query vector for it.
+- An empty bucket is ambiguous: either that source found nothing relevant, or it failed. `context_search` turns a failed source into an empty list and records the error only in the trace. Before you tell the user nothing is stored about X, confirm with `memory_search` or `knowledgebase_search`, which return errors.
+- The conversation bucket is datapack-wide. It returns embedded turns from every user and agent on the datapack, and each hit carries its author's `user_id`. Don't present a hit as this user's own history.
+- `limit` bounds the memory and KB buckets only; the conversation bucket returns up to 10 hits plus a thread of whole turns.
+- The memory bucket has no similarity floor on the default path. The KB bucket drops chunks above an absolute distance cutoff, so it can be empty even when `knowledgebase_search` would return a weak best match.
+- `force_source="memory" | "knowledge_base" | "conversation"` queries only that source. `force_source="memory"` reapplies the `memory_search` similarity floor.
+- `token_savings` is an estimate for reporting. Don't base decisions on it.
+
+**Errors:** `conversation_id_required`, `invalid_force_source`, `datapack_access_denied`, and `free_tier_limit_reached` (Free tier: 1,000 lifetime calls). Treat any error as a failed search (SKILL.md operating contract 1).
+
+---
+
 ## Memory Tools
 
 **Critical:** Pass your session's `agent_id` on every memory call. For Claude Desktop that's `claude_desktop` for normal attribution, or `meko_agent` when writing genuinely cross-project facts. Writes retain that attribution, while personal memory reads span all of this user's agents.
@@ -30,18 +71,13 @@ Every tool example below shows the correct parameters, expected response, and co
 
 ```
 memory_add(agent_id="claude_desktop",
+    conversation_id="<id from conversation_create>",
     text="Remember: deploy scripts must be run from the repo root, never a subdir.")
 ```
 
 **Response:**
 ```json
 {"results": [{"id": "mem-uuid-123", "memory": "User Amiram is VP of Product at YugabyteDB. Prefers concise responses."}]}
-```
-
-**With user scoping:**
-```
-memory_add(agent_id="agent", user_id="amiram",
-    text="Prefers Python for backend, Go for infrastructure.")
 ```
 
 **What NOT to store via memory_add:**
@@ -60,10 +96,10 @@ memory_add(agent_id="agent", user_id="amiram",
 
 **Cross-conversation discovery.** `memory_search` returns hits across every stored conversation for the `(datapack_id, user_id)` pair, across all agents (the tool intentionally passes `meko_agent_id=None` to mem0, so the `agent_id` argument scopes the trace but does not filter results). When a hit references an interesting conversation, follow up with `conversation_list` to browse the associated threads and `conversation_get` to read a specific one — the memory hit's `meko_conversation_id` field is the id to fetch. Pass `run_id` on the search itself to narrow to a single conversation up front.
 
-**Relevance floor.** `memory_search` drops results whose raw cosine similarity is below `MEMORY_SEARCH_MIN_SCORE` (default `0.2`). A query can return fewer results than `limit`, or an empty list, when nothing clears the bar. That means no sufficiently relevant memory, not a broken call.
+**Relevance floor.** `memory_search` drops results whose raw cosine similarity is below the server's `memory_search_min_score` setting (default `0.2`, tunable at runtime). A query can return fewer results than `limit`, or an empty list, when nothing clears the bar. That means no sufficiently relevant memory, not a broken call.
 
 ```
-memory_search(query="What programming language does the team use?", agent_id="agent")
+memory_search(query="What programming language does the team use?", agent_id="claude_desktop", conversation_id="<id>")
 ```
 
 **Response:**
@@ -73,22 +109,17 @@ memory_search(query="What programming language does the team use?", agent_id="ag
 
 **With limit:**
 ```
-memory_search(query="user preferences", agent_id="agent", limit=5)
+memory_search(query="user preferences", agent_id="claude_desktop", conversation_id="<id>", limit=5)
 ```
 
 ---
 
 ### memory_get_all
 
-**When to use:** List everything stored for an agent. Useful at session start to load context.
+**When to use:** See the most recent memories (about 20 rows) across every `agent_id`, plus the true `total`. It is not a complete listing and takes no paging arguments (SKILL.md operating contract 2). Use `memory_search` or `memory_get_by_id` for anything older or specific.
 
 ```
-memory_get_all(agent_id="agent")
-```
-
-**With user scoping:**
-```
-memory_get_all(agent_id="agent", user_id="amiram")
+memory_get_all(agent_id="claude_desktop", conversation_id="<id>")
 ```
 
 ---
@@ -96,7 +127,7 @@ memory_get_all(agent_id="agent", user_id="amiram")
 ### memory_get_by_id
 
 ```
-memory_get_by_id(memory_id="mem-uuid-123", agent_id="agent")
+memory_get_by_id(memory_id="mem-uuid-123", agent_id="claude_desktop", conversation_id="<id>")
 ```
 
 ---
@@ -106,7 +137,7 @@ memory_get_by_id(memory_id="mem-uuid-123", agent_id="agent")
 **When to use:** Overwrite a specific memory's text. Requires the memory UUID.
 
 ```
-memory_update(memory_id="mem-uuid-123", text="Updated: Team uses Go for all new services", agent_id="agent")
+memory_update(memory_id="mem-uuid-123", text="Updated: Team uses Go for all new services", agent_id="claude_desktop", conversation_id="<id>")
 ```
 
 ---
@@ -114,17 +145,19 @@ memory_update(memory_id="mem-uuid-123", text="Updated: Team uses Go for all new 
 ### memory_delete_by_id
 
 ```
-memory_delete_by_id(memory_id="mem-uuid-123", agent_id="agent")
+memory_delete_by_id(memory_id="mem-uuid-123", agent_id="claude_desktop", conversation_id="<id>")
 ```
+
+`memory_update` and `memory_delete_by_id` return `memory_is_promoted` for a promoted memory, and `not_found` for an id that is missing or belongs to another account.
 
 ---
 
 ### memory_delete_all
 
-**Destructive.** Deletes all memories for the agent. For removing a single memory, prefer `memory_delete_by_id` — `memory_delete_all` wipes the entire agent scope in the datapack.
+**Destructive.** Deletes all memories in the passed `agent_id`'s bucket in the datapack. It does not touch other agents' rows, even though `memory_search` shows them; omitting `agent_id` deletes only the `meko_agent` bucket. Pass `run_id=<conversation_id>` to limit it to one conversation. For removing a single memory, prefer `memory_delete_by_id`.
 
 ```
-memory_delete_all(agent_id="agent")
+memory_delete_all(agent_id="claude_desktop", conversation_id="<id>")
 ```
 
 ---
@@ -156,12 +189,12 @@ On 403, authentication, or permission failure, report the error and stop — do 
 **When to use:** Start storing a multi-turn exchange. Do this when the session contains valuable dialog worth preserving.
 
 ```
-conversation_create(agent_id="agent", user_id="amiram",
+conversation_create(agent_id="claude_desktop",
     title="Debugging the auth middleware",
     datapack_id="<uuid from datapack_list>")
 ```
 
-`datapack_id` is required whenever no server-side default resolves for the caller. Omitting it in that state returns `{"error": "datapack_id_required"}` and persists nothing; the same contract applies to `conversation_add_message`, `conversation_get`, `conversation_update`, `conversation_delete`, and `conversation_index_history`.
+`datapack_id` is required whenever no server-side default resolves for the caller. Omitting it in that state returns `{"error": "datapack_id_required"}` and persists nothing; the same contract applies to `conversation_add_message`, `conversation_get`, `conversation_update`, and `conversation_delete`.
 
 **Response:**
 ```json
@@ -354,21 +387,34 @@ For large files use `local_path` to read the file. S3 URLs are never exposed.
 ### datapack_create / datapack_list / datapack_describe
 
 ```
-datapack_create(name="analytics_prod")
+datapack_create(name="analytics_prod", conversation_id="<conversation id>")
 datapack_list(conversation_id="<this conversation's id>")  # returns datapack_id for each datapack
-datapack_describe(datapack_id="<uuid>", include_status=True)
+datapack_describe(datapack_id="<uuid>", include_status=True, conversation_id="<conversation id>")
 ```
+
+`datapack_describe` returns these counts:
+
+| Field | Meaning |
+|---|---|
+| `memory_count` | All memories stored in the datapack |
+| `collective_memory_count` | Memories promoted to shared knowledge |
+| `learnings_count` | Memories awaiting a promotion decision |
+| `knowledge_base_file_count` | Uploaded KB documents; `null` if the status endpoint is unreachable |
+| `knowledge_chunk_count` | KB chunks across all documents (for debugging retrieval) |
+| `shared_knowledge_count` | `collective_memory_count + knowledge_base_file_count`; `null` when the file count is `null` |
+
+`knowledge_count` is a deprecated alias of `knowledge_chunk_count`. `datapack_list` doesn't compute counts; call `datapack_describe` for them.
 
 ### datapack_update / datapack_delete
 
 `datapack_update` renames a datapack, edits its description, and/or opts it in/out of conversation-search embedding. At least one of `name` / `description` / `conversation_search_opt_out` must be provided (or the tool returns `nothing_to_update`). The server refuses to rename `meko_default_datapack` — the error is `"meko_default_datapack cannot be renamed"`. Passing `description=""` does NOT clear an existing description. `conversation_search_opt_out=True` stops future turns from being indexed and is restricted to the datapack's owner or a maintainer. This is best-effort, not a hard guarantee — a transient database error on the live embed path's opt-out check fails open, so a turn can occasionally still get embedded for an opted-out datapack.
 
 ```
-datapack_update(datapack_id="<uuid>", name="renamed-datapack")
-datapack_update(datapack_id="<uuid>", description="new description")
-datapack_update(datapack_id="<uuid>", name="x", description="y")
-datapack_update(datapack_id="<uuid>", conversation_search_opt_out=True)
-datapack_delete(datapack_id="<uuid>")  # Irreversible!
+datapack_update(datapack_id="<uuid>", name="renamed-datapack", conversation_id="<conversation id>")
+datapack_update(datapack_id="<uuid>", description="new description", conversation_id="<conversation id>")
+datapack_update(datapack_id="<uuid>", name="x", description="y", conversation_id="<conversation id>")
+datapack_update(datapack_id="<uuid>", conversation_search_opt_out=True, conversation_id="<conversation id>")
+datapack_delete(datapack_id="<uuid>", conversation_id="<conversation id>")  # Irreversible!
 ```
 
 ### Agent and knowledge-base management (NOT MCP — control-plane only)

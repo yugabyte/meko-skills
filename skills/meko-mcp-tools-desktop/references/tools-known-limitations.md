@@ -70,8 +70,25 @@ The skill description is tuned to its 1024-char ceiling; broadening it further d
 2. **Server-side guidance** — the `agent_id` tool docstrings and the server's connect-time instructions name `claude_desktop` as this client's bucket, so even a skill-less tool-search call avoids the wrong-bucket (`claude_code`) write.
 3. Nothing is lost when the *user* explicitly recalls or saves — only passive capture of in-passing facts is best-effort.
 
-## No semantic search over conversation content
+## memory_delete_all is agent-scoped; memory reads are not
 
-Semantic (meaning-based) search across stored conversation content is not part of the public tool surface today. To find a past conversation, browse with `conversation_list` (by datapack) and inspect candidates with `conversation_get`.
+`memory_search` and `memory_get_all` return every agent's rows for the user. `memory_delete_all` deletes only rows in the `agent_id` you pass, and an omitted `agent_id` means the `meko_agent` bucket. A `memory_search(run_id=X)` preview can therefore list rows that `memory_delete_all(run_id=X)` leaves in place. To clear rows written by several agents, delete them by id with `memory_delete_by_id`, or call `memory_delete_all` once per `agent_id` shown in the preview.
 
-For finding past knowledge by meaning, `memory_search` remains the most reliable path — which is why storing key facts via `memory_add` alongside conversations is important.
+## Promoted memories are read-only through MCP
+
+`memory_update` and `memory_delete_by_id` return `memory_is_promoted` for a memory that has been promoted to shared knowledge. Edit or remove promoted content in the Cloud UI Learnings tab.
+
+## Conversation search covers embedded turns only
+
+`context_search` searches past conversation turns by meaning in its `conversation` bucket. Only turns embedded into the conversation-search cache are searchable. Turns are embedded by default, except when:
+
+- the datapack opted out with `datapack_update(datapack_id=..., conversation_search_opt_out=True, conversation_id=...)`;
+- the account hit the embedding quota (`conversation_search_skipped: "quota_exceeded"`); or
+- the turn was too short to carry content (the server skips trivial turns); or
+- the turn was stored before conversation search was enabled.
+
+To find a conversation by other attributes, browse with `conversation_list` and inspect candidates with `conversation_get`.
+
+## Very long conversations can't be read back
+
+When a conversation's trace grows too large for Langfuse, `conversation_get` and `conversation_update` can fail or time out for that conversation, even though `conversation_add_message` and `conversation_delete` still work. Servers without the MEKO-714 fix instead return `not_found` from `conversation_add_message` on these conversations. If read-back or a write fails with `not_found` on a long conversation that you know exists, report the failure as a server-side limit on that conversation. Don't recreate the conversation under the same id or replay its messages; that makes the trace larger.

@@ -21,7 +21,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 1. **Never retry the identical failed call more than once.** If it fails twice with the same error, it's not transient — diagnose the cause.
 2. **Distinguish transient vs persistent failures.** "Connection already closed" is transient (retry once). "Permission denied" is persistent (stop, don't retry).
 3. **Don't guess parameters sequentially.** If a tool fails with one parameter format, don't try 4 variations. Check this skill's docs for the correct format first.
-4. **Use your session's `agent_id` consistently on writes** (the SessionStart-injected value), and on `conversation_get` — conversations are owned by the creating `agent_id`; a wrong value returns `agent_id_mismatch`. Memory reads and `conversation_list` are unaffected by `agent_id`. Don't switch write forms mid-session.
+4. **Use your session's `agent_id` consistently on writes** (the SessionStart-injected value), and on every conversation call (`conversation_get`, `conversation_add_message`, `conversation_update`, `conversation_delete`). Conversations are owned by the creating `agent_id`; a wrong value returns `agent_id_mismatch`. Memory reads and `conversation_list` are unaffected by `agent_id`. Don't switch write forms mid-session.
 
 ---
 
@@ -37,6 +37,22 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 2. If it fails again, the memory subsystem is unhealthy for this session — stop trying memory calls and tell the user. Do not waste tokens re-sending the same payload.
 
 **Anti-pattern from real sessions:** Agent called `memory_add` with 500+ tokens of text, got "connection already closed", retried the identical call 3 more times (each 500+ tokens). Wasted ~2000 tokens on guaranteed failures.
+
+---
+
+## Connection errors: `[Errno 111] Connection refused`
+
+**Affects:** any tool, intermittently. Reports show `memory_add`, `conversation_create`, `memory_search`, and `context_search` failing this way while identical calls succeed minutes later.
+
+**What it means:** the request reached no listening server, usually a server instance that was restarting or scaling. It is not a timeout and not a rejected argument.
+
+**What to do:** wait a few seconds and retry once. Retry `conversation_add_message` only with a `seed`, and never retry `conversation_create` (see the table below). If the retry also fails, report the failure. For a write, tell the user it was not saved; don't let a failed write pass silently.
+
+---
+
+## `memory_search` hangs or times out
+
+`memory_search` can stall for minutes under backend load while other tools respond. Don't raise the client timeout; that only makes the stall longer. Retry once. If it stalls again, report that the search failed, and if the user needs an answer now, try `context_search` or `memory_get_by_id` for a known id. `memory_get_all` only returns a recent window, so it can't replace a search.
 
 ---
 
@@ -58,6 +74,34 @@ Bursts of requests on one token return:
 - A rate-limited `artifact_put` returns this error **instead of** a `content_hash` — checking only for the hash misreads throttling as silent write loss.
 - Honor the retry-after (~60s) or back off exponentially; pace sustained work. Retry only idempotent operations or hash-protected writes.
 - Distinct from the lifetime quota error (`free_tier_limit_reached`) — waiting never recovers that one.
+
+---
+
+## Quota errors that look like auth errors
+
+`free_tier_limit_reached` can arrive with HTTP 403, and automatic capture that hits a cap shows up as capture failing with 403. Read the error code, not the status. A quota error means the account reached a lifetime cap (see `tools-known-limitations.md`). Don't rotate keys or reinstall. Tell the user which tool hit the cap and that upgrading the plan lifts it.
+
+---
+
+## Datapack and ownership errors
+
+| Error | Meaning | What to do |
+|---|---|---|
+| `datapack_access_denied` | The `datapack_id` isn't a UUID, or it isn't owned by or shared with your account. The access check also fails closed on a transient server database error. | Retry once. If it repeats, stop; don't switch to another datapack. If the id came from a pin, ask the user to re-pin with the select-datapack skill. |
+| `datapack_id_required` | The call couldn't resolve a datapack. Conversation reads and writes (including `conversation_list`), `datapack_describe`, and `knowledgebase_delete_document` return it. | Pass the pinned `datapack_id`. Don't drop the parameter to make the call pass. |
+| `not_found` from `memory_get_by_id`, `memory_update`, or `memory_delete_by_id` | The memory doesn't exist **or** belongs to another account. The server returns the same error for both on purpose. | Check the id came from a search in this datapack. |
+| `memory_is_promoted` | The memory was promoted to shared knowledge and is read-only through MCP. | Point the user at the Cloud UI Learnings tab. |
+| `invalid_run_id` | `memory_delete_all` got a `run_id` that isn't a conversation id. | Pass the conversation UUID, or omit `run_id`. |
+| `embedder_error` from `knowledgebase_search` | The server couldn't resolve the embedding setup for this datapack's index. | Report it; retrying won't help. |
+| `invalid_force_source` from `context_search` | `force_source` isn't `auto`, `memory`, `knowledge_base`, or `conversation`. | Omit `force_source`. |
+
+---
+
+## Conversation writes fail right after `conversation_create`
+
+`conversation_add_message` has intermittently returned `not_found`, or `agent_id_mismatch` naming agent `'None'`, seconds after `conversation_create` returned that id. It shows up most with several parallel subagents writing to one conversation. Retry once with the same `seed` after a few seconds. If it still fails, don't create a new conversation for the same work: save the durable findings with `memory_add` and tell the user the transcript is incomplete.
+
+On a long conversation that has worked before, `not_found` can instead mean the trace grew too large to load. See `tools-known-limitations.md`.
 
 ---
 

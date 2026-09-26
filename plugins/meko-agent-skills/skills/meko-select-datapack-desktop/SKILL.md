@@ -11,7 +11,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.2.1"
+  version: "1.2.2"
   tags: meko, datapack, selection, project, claude-desktop, desktop
 ---
 <!--
@@ -42,7 +42,7 @@ text:        "meko_active_datapack=<uuid> name=<name> selected_at=<iso8601>"
 metadata:    { "type": "active-datapack-pin" }
 ```
 
-You discover it by calling `memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)` at the start of any turn that's about to make a Meko MCP write. If you find a pin, pass `datapack_id="<uuid>"` to every Meko call that accepts it. If you don't find one, fall back to the server default (omit the parameter).
+You discover it by calling `memory_search(query="meko_active_datapack", agent_id="claude_desktop", conversation_id="<this conversation's id>", limit=1)` (`conversation_id` is required and must be a 32-hex id; before `conversation_create`, pass a freshly generated one, never `""`) at the start of any turn that's about to make a Meko MCP write. If you find a pin, pass `datapack_id="<uuid>"` to every Meko call that accepts it. If you don't find one, fall back to the server default (omit the parameter).
 
 ## When to invoke this skill
 
@@ -99,7 +99,7 @@ the Role column. Do not hardcode "Owner", do not invent or normalize the value
 response is the source of truth — see `references/role-display-future.md` for
 the taxonomy.
 
-If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>')` to make one, or visit the Meko Cloud console."* Stop here.
+If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>', conversation_id='<conversation id>')` to make one, or visit the Meko Cloud console."* Stop here.
 
 If the response has exactly **one** entry, **auto-select it**. Print: *"Only one datapack: `<name>`. Auto-selecting. Run `meko-select-datapack-desktop` again with `clear` to unset."* Skip the table; jump to step 4 (persist) and step 5 (confirm).
 
@@ -206,7 +206,7 @@ would split capture across the old and new datapacks or fail outright.
 ## Edge cases
 
 - **Multiple pin memories somehow exist** — the user (or a buggy earlier run) created duplicates. Use the most recent (highest `selected_at`); offer to delete the others.
-- **The pinned datapack no longer exists on the server** — the next Meko MCP call will fail with a not-found error. Re-run the skill to pick a new one or `clear` the stale pin.
+- **The pinned datapack no longer exists or was unshared** — the next Meko MCP call that passes it fails with `datapack_access_denied`. Re-run the skill to pick a new one or `clear` the stale pin.
 - **memory_search times out or fails** — fall back to the server default (omit `datapack_id`) and tell the user *"Couldn't read the active-datapack pin. Using server default for this call."* Don't guess a UUID.
 - **User explicitly overrides for a single call** — pass the user's `datapack_id` for that one call. Do NOT update the pin memory.
 
