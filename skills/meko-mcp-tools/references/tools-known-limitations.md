@@ -26,6 +26,10 @@ These are current limitations of the Meko MCP tools. Know them upfront to avoid 
 | Standard | 5,000 | 5,000 | 30,000 |
 | Pro / Enterprise | uncapped | uncapped | uncapped |
 
+The Free tier also caps `context_search` and `conversation_add_message` at 1,000 calls each. Embedding turns into the conversation-search cache has its own cap (2,000 turns on Free, 10,000 on Pro). When that cap is reached, `conversation_add_message` still stores the turn and reports `conversation_search_skipped: "quota_exceeded"`; the turn just won't appear in `context_search`'s conversation bucket.
+
+A quota error can arrive with HTTP 403. It is not an authentication failure; don't reconfigure credentials because of it.
+
 When the cap is reached the tool returns an error object with code `free_tier_limit_reached` (on every tier; the `tier` field names the capped tier) and **no `results` key**.
 
 - **Do not retry** — the cap is lifetime.
@@ -38,7 +42,17 @@ One call returns roughly the **20 most recent rows**; the response's `total` rep
 
 ## run_id is a read/delete filter on the conversation id, not a write key
 
-`memory_search(run_id=<conversation_id>)` and the memory delete tools filter on the row's `meko_conversation_id`, so passing a conversation id there correctly scopes the call to that one conversation — a supported, reliable way to read a single conversation's memories (read/write/delete scoping was made consistent in MEKO-473/MEKO-474, #271). The one gotcha is on the write side: `memory_add`'s own `run_id` is Langfuse trace metadata only and is **not** persisted as the row's conversation id, so a row written with `memory_add(run_id=X)` is not findable via `memory_search(run_id=X)`. Scope writes with `conversation_id`, then filter the matching read by that same id.
+`memory_search(run_id=<conversation_id>)` and `memory_delete_all(run_id=<conversation_id>)` filter on the row's `meko_conversation_id`, so passing a conversation id there correctly scopes the call to that one conversation — a supported, reliable way to read a single conversation's memories (read/write/delete scoping was made consistent in MEKO-473/MEKO-474, #271). The one gotcha is on the write side: `memory_add`'s own `run_id` is Langfuse trace metadata only and is **not** persisted as the row's conversation id, so a row written with `memory_add(run_id=X)` is not findable via `memory_search(run_id=X)`. Scope writes with `conversation_id`, then filter the matching read by that same id.
+
+`memory_get_all` accepts `run_id` but ignores it, and `conversation_list` has no `run_id`.
+
+## memory_delete_all is agent-scoped; memory reads are not
+
+`memory_search` and `memory_get_all` return every agent's rows for the user. `memory_delete_all` deletes only rows in the `agent_id` you pass, and an omitted `agent_id` means the `meko_agent` bucket. A `memory_search(run_id=X)` preview can therefore list rows that `memory_delete_all(run_id=X)` leaves in place. To clear rows written by several agents, delete them by id with `memory_delete_by_id`, or call `memory_delete_all` once per `agent_id` shown in the preview.
+
+## Promoted memories are read-only through MCP
+
+`memory_update` and `memory_delete_by_id` return `memory_is_promoted` for a memory that has been promoted to shared knowledge. Edit or remove promoted content in the Cloud UI Learnings tab.
 
 ## No MCP tools for index / source / pipeline lifecycle
 
@@ -84,8 +98,17 @@ It works **poorly** for:
 
 Never ingest CSV row-by-row into memory — each row becomes a fragmented fact with lost context.
 
-## No semantic search over conversation content
+## Conversation search covers embedded turns only
 
-Semantic (meaning-based) search across stored conversation content is not part of the public tool surface today. To find a past conversation, browse with `conversation_list` (by datapack) and inspect candidates with `conversation_get`.
+`context_search` searches past conversation turns by meaning in its `conversation` bucket. Only turns embedded into the conversation-search cache are searchable. Turns are embedded by default, except when:
 
-For finding past knowledge by meaning, `memory_search` remains the most reliable path — which is why storing key facts via `memory_add` alongside conversations is important.
+- the datapack opted out with `datapack_update(datapack_id=..., conversation_search_opt_out=True, conversation_id=...)`;
+- the account hit the embedding quota (`conversation_search_skipped: "quota_exceeded"`); or
+- the turn was too short to carry content (the server skips trivial turns); or
+- the turn was stored before conversation search was enabled.
+
+To find a conversation by other attributes, browse with `conversation_list` and inspect candidates with `conversation_get`.
+
+## Very long conversations can't be read back
+
+When a conversation's trace grows too large for Langfuse, `conversation_get` and `conversation_update` can fail or time out for that conversation, even though `conversation_add_message` and `conversation_delete` still work. Servers without the MEKO-714 fix instead return `not_found` from `conversation_add_message` on these conversations. If read-back or a write fails with `not_found` on a long conversation that you know exists, report the failure as a server-side limit on that conversation. Don't recreate the conversation under the same id or replay its messages; that makes the trace larger.

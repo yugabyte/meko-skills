@@ -59,7 +59,7 @@ conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot
 |--------|------|
 | "remember that...", "note that...", "keep in mind..." | `memory_add` |
 | "store this conversation", "save this chat" | `conversation_create` + `conversation_add_message` |
-| "what do you know about X?", "recall..." | `memory_search` |
+| "what do you know about X?", "recall..." | `context_search` |
 | "show me our past conversation about..." | `conversation_list` + `conversation_get` |
 | "the user prefers...", "their budget is..." | `memory_add` |
 | "save my query and your response" | `conversation_add_message` |
@@ -107,7 +107,7 @@ Agents on Cloud Meko have two distinct read surfaces. Pick the right one for the
 
 ### When the user asks "what do you know about X?"
 
-A full sweep is two calls: `memory_search` (all your personal memories, every agent — no per-agent fan-out) then `knowledgebase_search` (team-shared knowledge). When you answer, name which surface each finding came from, so the user knows why something is or isn't there.
+Call `context_search`. One call returns your personal memories (every agent, no per-agent fan-out), team-shared knowledge, and matching past-conversation turns from anyone on the datapack. If the memory or KB bucket is empty, confirm with `memory_search` or `knowledgebase_search` before saying nothing is there, because `context_search` returns an empty list for a failed source. When you answer, name which surface each finding came from, so the user knows why something is or isn't there.
 
 ## Memory limitations for structured data
 

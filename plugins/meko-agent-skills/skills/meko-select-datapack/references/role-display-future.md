@@ -40,7 +40,7 @@ Note that the upstream Go source (`/Users/amiram.mizne/sandbox/GitHub/meko/api_s
 
 `datapack_list` does not carry usable count fields. The list handler on the Meko server doesn't run the per-datapack queries that populate `memory_count`, `knowledge_count`, `learnings_count`, or `collective_memory_count` — all four are zero on every row (`models.Datapack` declares them without `omitempty`, so the zeros survive JSON marshalling). The MCP client strips all four before returning so callers aren't misled.
 
-If the user asks for counts, call `datapack_describe(datapack_id=...)` on the specific rows they care about — that's the path that runs the count queries. Don't invent numbers or claim zero from the list response.
+If the user asks for counts, call `datapack_describe(datapack_id=..., conversation_id="<conversation id>")` on the specific rows they care about — that's the path that runs the count queries. Don't invent numbers or claim zero from the list response.
 
 ## Sharing UI vs API state
 

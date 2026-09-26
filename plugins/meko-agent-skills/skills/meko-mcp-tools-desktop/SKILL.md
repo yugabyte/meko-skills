@@ -17,7 +17,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "2.8.0"
+  version: "2.9.0"
   tags: mcp, yugabytedb, tools, datapack, memory, conversation, rag, meko, desktop
 ---
 <!--
@@ -37,7 +37,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide (Desktop)
 
-Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 24 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
+Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 25 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
 
 **Read this first.** The Meko server extracts durable memories automatically from the conversation turns you post to it — the extraction runs *inside* `conversation_add_message`. Claude Desktop has no capture hooks, so **capturing substantive turns via `conversation_add_message` is a core part of using this skill.** Do that and memory takes care of itself: facts the user states get extracted and stored without a separate `memory_add`. Explicit `memory_add` is reserved for a few narrow cases (below). See "Per-turn conversation capture" — it's the heart of this skill.
 
@@ -54,11 +54,13 @@ On the first user turn in any session, before answering substantive questions:
 1. **Resolve the active datapack pin first — before creating the conversation.** A conversation cannot move between datapacks once created, so you must know the pinned datapack *before* `conversation_create`, or capture lands in the wrong workspace. Call:
    ```
    memory_search(query="meko_active_datapack",
-                 agent_id="claude_desktop", conversation_id="", limit=1)
+                 agent_id="claude_desktop",
+                 conversation_id="<fresh 32-hex id>", limit=1)
    ```
+   `<fresh 32-hex id>` is a newly generated 32-character lowercase hex string, such as a UUID with the hyphens removed. You don't have a conversation yet, and `""` fails on production `memory_search` (MEKO-707).
    If a pin row comes back, extract the UUID after `meko_active_datapack=` — call it `<PIN>` — and pass `datapack_id="<PIN>"` to **every** Meko call for the rest of the session (`conversation_create`, `memory_search`, `conversation_add_message`, etc.). If no pin is found, omit `datapack_id` everywhere and let the server resolve the default. (The `meko-select-datapack-desktop` skill is what writes this pin; you honor it here whether or not that skill ran this session.)
 2. **Call `conversation_create`** (`agent_id="claude_desktop"`, and `datapack_id="<PIN>"` if a pin was found) once and keep the returned `conversation_id` for the whole session. You need it to post turns (per-turn capture, above) and for memory calls.
-3. **Call `memory_search`** with `agent_id="claude_desktop"`, the `conversation_id` from step 2, `datapack_id="<PIN>"` if pinned, and a query derived from the user's topic. One search returns this user's memories across every agent, including the `meko_agent` common bucket; `agent_id` attributes the trace but does not filter memory results.
+3. **Call `context_search`** with `agent_id="claude_desktop"`, the `conversation_id` from step 2, `datapack_id="<PIN>"` if pinned, and a query derived from the user's topic. One call returns separate memory, knowledge-base, and past-conversation buckets. The memory bucket covers this user's memories across every agent, including the `meko_agent` common bucket; `agent_id` doesn't filter it.
 4. Incorporate the recalled facts into your reply. Don't re-ask things you've been told before.
 
 Recall and capture are routine parts of answering — the user has set Meko up as their memory layer, so you don't need a per-call permission prompt for them. Do briefly say what you did ("checked your Meko memory", "saved that to your Meko memory") — a short disclosure, not a silent background action and not a big announcement.
@@ -71,7 +73,7 @@ Recall and capture are routine parts of answering — the user has set Meko up a
 
 **Read scoping:**
 - `memory_search` / `memory_get_all` — scoped to `(datapack_id, user_id)`. `agent_id` does not filter results, so one call returns this user's memories across every agent.
-- `conversation_list` — also returns this user's conversations across agents. `conversation_get` is agent-owned and requires the exact `agent_id` that created the conversation.
+- `conversation_list` — also returns this user's conversations across agents. `conversation_get`, `conversation_add_message`, `conversation_update`, and `conversation_delete` are agent-owned and require the exact `agent_id` that created the conversation.
 - `knowledgebase_search` — scoped to `datapack_id` only. `agent_id` on the request is ignored. Returns the team's Shared Knowledge — uploaded documents plus promoted memories.
 
 Some pre-existing rows use the older constant `agent_id="agent"` or ad-hoc shapes (e.g. `claude-desktop` with a hyphen). They remain readable; the stored value is still shown as provenance in the UI. See `tools-agent-id-conventions.md` for the full model.
@@ -90,7 +92,7 @@ conversation_add_message(conversation_id="<id>",
     reasoning="<why you answered as you did; tool calls if any>")
 ```
 
-Post the turn verbatim — do not summarize. The call is cheap (queued, ~0.1s) and returns immediately.
+Post the turn verbatim — do not summarize.
 
 The failure mode to avoid: answering the user and moving on **without posting the turn**. If you don't post it, nothing is captured and nothing is extracted — a turn later there's no record the exchange happened. Treat `conversation_add_message` as part of completing a substantive turn: once you've written your reply, post the turn (and note you did) before the turn is done. This is transparent capture into the user's own memory store, so there's no reason to skip it — but if the content is sensitive or the user asked you not to store it, skip and say so.
 
@@ -132,10 +134,10 @@ Meko turns your volatile context window into persistent, shareable knowledge:
 **Meko is the memory store — never write memories to local files, markdown notes, or any file-based memory system.** Meko's memory is persistent across all agents, sessions, and team members; local files are not.
 
 - To remember what the user says → **post the turn with `conversation_add_message`** (the server extracts memories from it), NOT write to a local file.
-- To recall → call `memory_search` on the MCP server, NOT read local files.
+- To recall → call `context_search` on the MCP server (or `memory_search` for memory alone), NOT read local files.
 - For the narrow explicit-save cases → `memory_add` (see "When to also call memory_add").
 
-If a Meko call fails, you may fall back to local storage and tell the user — but Meko is always the first choice.
+If a Meko call fails, tell the user the save or recall failed and include the error. Don't quietly write a local file instead; offer one only if the user wants a local copy.
 
 ## Core principle: capture the turn, don't hand-curate memory
 
@@ -154,7 +156,7 @@ Your job is not to decide fact-by-fact what to `memory_add`. It's to **post ever
 | User corrects or negates a prior fact | Post the turn (the new fact is extracted). Extraction is **additive**, so if the stale fact must not survive, `memory_search` for it and `memory_update` / `memory_delete_by_id`. |
 | User explicitly says "remember this" | `memory_add` (verbatim), in addition to posting the turn. |
 | A durable fact lives only in your output or a tool result | `memory_add`. Extraction reads the user side of the turn, so it won't capture these. |
-| User asks "what do you know about X?" | Two-call sweep: one `memory_search(agent_id="claude_desktop")` covers this user's memories across every agent; `knowledgebase_search(datapack_id=<X>)` covers team-shared knowledge. |
+| User asks "what do you know about X?" | `context_search(agent_id="claude_desktop")`. One call returns separate memory, knowledge-base, and past-conversation buckets; report each. Confirm an empty memory or KB bucket with `memory_search` or `knowledgebase_search` before saying nothing is stored. |
 | User asks "what do we (as a team) know about X?" or about uploaded documents | `knowledgebase_search` (returns uploaded docs + promoted memories). |
 | User asks to share specific private memories with the team | Follow the `memory_promote` confirmation workflow below. Never promote based on a fuzzy search result or implied consent. |
 | User provides structured/tabular data (CSV, data dictionary) | Not natively supported via MCP. Point the user at the UI's Add Knowledge upload; do not `memory_add` row-by-row. |
@@ -193,6 +195,24 @@ memory_add(
 ```
 Required parameters: `text`, `agent_id`, `conversation_id`. On **writes**, `conversation_id` must be a real UUID from `conversation_create` — writes attached to a nil/empty conversation are orphaned in Langfuse traces. Empty / missing `agent_id` is NOT rejected — the server quietly falls back to the `meko_agent` common bucket. Pass `agent_id="claude_desktop"` explicitly so this client's writes stay in the right bucket and don't pollute the cross-project pool.
 
+### context_search: default first call for recall
+```
+context_search(
+               query="auth migration decisions",
+               agent_id="claude_desktop",
+               conversation_id="<id from conversation_create>",
+               datapack_id="<PIN, if pinned>")
+```
+Required parameters: `query`, `conversation_id`. It queries memory, the knowledge base, and the conversation-history cache in parallel and returns `{"results": {"memory": [...], "knowledge_base": [...], "conversation": {"hits": [...], "thread": [...]}}, "token_savings": {...}}`.
+
+- Read every bucket; a KB document can supersede a memory.
+- An empty bucket is ambiguous: either that source found nothing relevant, or it failed. `context_search` turns a failed source into an empty list and records the error only in the trace. Before you tell the user nothing is stored about X, confirm with `memory_search` or `knowledgebase_search`, which return errors.
+- A bucket is `null` only when that source wasn't queried: `force_source` excluded it, or the server couldn't build a query vector for it.
+- The conversation bucket is datapack-wide. It returns embedded turns from every user and agent on the datapack, and each hit carries its author's `user_id`. Don't present a hit as this user's own history.
+- `limit` bounds the memory and KB buckets only; the conversation bucket returns up to 10 hits plus a thread of whole turns.
+- The memory bucket has no similarity floor here, so discount weak rows against the other buckets.
+- Use `memory_search` for the pin lookup and for `run_id` filtering, and `knowledgebase_search` when you need exact `document_id` values.
+
 ### memory_search — correct call pattern
 ```
 memory_search(
@@ -200,14 +220,14 @@ memory_search(
               agent_id="claude_desktop",
               conversation_id="<id from conversation_create>")
 ```
-Required parameters: `query`, `agent_id`, `conversation_id`. On **`memory_search`** specifically, `conversation_id` is used only for Langfuse trace nesting — it does NOT filter results. Pass the session's UUID so the search span appears under the active conversation; passing `""` is accepted and means "don't nest under any trace." For conversation-scoped filtering use the separate `run_id` parameter.
+Required parameters: `query`, `conversation_id`. On **`memory_search`** specifically, `conversation_id` is used only for Langfuse trace nesting — it does NOT filter results. Pass the session's UUID so the search span appears under the active conversation. Never pass `""`: production `memory_search` currently fails on an empty value (MEKO-707). If you have no conversation yet, pass a freshly generated 32-character lowercase hex id (a UUID with the hyphens removed); on a read it only nests the trace. For conversation-scoped filtering use the separate `run_id` parameter.
 
 `agent_id` attributes the search trace but does not filter the returned memories. One call includes rows written by `claude_desktop`, `meko_agent`, coding agents, and legacy agent values for this user.
 
-**Interpreting results.** `memory_search` returns a single list — `{"results": [...]}` — the stored memories, ranked by a hybrid score (semantic similarity + keyword match + a boost for memories mentioning the entities named in your query). There are no `relations` / `promoted_relations` keys. Two things to know so you don't discard useful results:
+**Interpreting results.** `memory_search` returns a single list — `{"results": [...]}` — the stored memories, ranked by a hybrid score (semantic similarity + keyword match + a boost for memories mentioning the entities named in your query). There are no `relations` / `promoted_relations` keys.
 
 - **`memory_search` is cross-agent by design.** Results include memories written by *other* clients (`agent_id` "agent", "claude_code:…", etc.) for the same user — that is expected, not a tenant leak. Use them.
-- **Older (pre-2.x) servers may still return `relations` / `promoted_relations` (graph edges) alongside `results`.** If they appear, trust the memory rows in `results` and disregard any edge that contradicts them — don't conclude the whole result set is "someone else's data" and throw it away.
+- **Results below a server-configured similarity floor (default 0.2) are dropped.** An empty `results` list can mean "only weak matches", not "nothing stored". Some older rows may carry a `graph_nodes` / `graph_edges` block in `metadata`; ignore it.
 
 ### knowledgebase_search — correct call pattern
 ```
@@ -218,7 +238,7 @@ knowledgebase_search(
                      datapack_id="<datapack UUID>",
                      limit=10)
 ```
-Required parameters: `query`, `agent_id`, `conversation_id`, `datapack_id`. `datapack_id` has no default here. `agent_id` is ignored for filtering — results are the team's shared knowledge on the datapack regardless of what you pass.
+Required parameters: `query`, `conversation_id`, `datapack_id`. `datapack_id` has no default here. `agent_id` is ignored for filtering — results are the team's shared knowledge on the datapack regardless of what you pass.
 
 ### memory_promote — explicit confirmation required
 
@@ -236,20 +256,20 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 ### Critical parameter rules
 
-- **agent_id**: `"claude_desktop"` for this client's project-less writes and trace attribution. Use `"meko_agent"` when writing genuinely cross-project facts such as user identity. Empty/missing values on writes route to `meko_agent`. The value does not filter `memory_search`, `memory_get_all`, `conversation_list`, or `knowledgebase_search`; `conversation_get` is the read that requires the creating agent's exact value. See `tools-agent-id-conventions.md`.
-- **conversation_id**: Behavior varies by tool. On write tools (`memory_add`, `conversation_add_message`) pass a real UUID from `conversation_create` — a nil/empty value orphans the Langfuse trace. On `memory_search` it's used only for trace nesting (not for filtering), and empty-string is accepted; on `memory_get_all` and most read tools, still pass the session UUID when you have one. Never pass `"current"` or other non-UUID junk — only a real UUID or an intentionally empty string where the tool allows it.
+- **agent_id**: `"claude_desktop"` for this client's project-less writes and trace attribution. Use `"meko_agent"` when writing genuinely cross-project facts such as user identity. Empty/missing values on writes route to `meko_agent`. The value does not filter `memory_search`, `memory_get_all`, `conversation_list`, or `knowledgebase_search`. The conversation calls (`conversation_get`, `conversation_add_message`, `conversation_update`, `conversation_delete`) require the creating agent's exact value, and `memory_delete_all` deletes only the passed value's bucket. See `tools-agent-id-conventions.md`.
+- **conversation_id**: Behavior varies by tool. On write tools (`memory_add`, `conversation_add_message`) pass a real UUID from `conversation_create` — a nil/empty value orphans the Langfuse trace. On read tools it's used only for trace nesting (not for filtering), but it must still be a 32-hex id: `memory_search` fails on `""`, and most other tools reject it with `conversation_id_required`. Never pass `"current"`, `""`, or other non-UUID values. Before `conversation_create` (the first-turn pin lookup), use a freshly generated 32-hex id.
 - **When in doubt about optional parameters, omit them.** The server has sensible defaults.
 
 ## Key concepts
 
-1. **24 tools in 6 groups** (all available in production): Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (2 — `knowledgebase_search`, `knowledgebase_delete_document`), Datapack (5), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
+1. **25 tools in 7 groups** (all available in production): Retrieval (1: `context_search`), Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (2 — `knowledgebase_search`, `knowledgebase_delete_document`), Datapack (5), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
 2. **datapack_id routing**: DB, RAG, and memory tools accept optional `datapack_id` (default datapack if omitted). `knowledgebase_search` is the exception: `datapack_id` is **required** there.
 3. **agent_id is multi-agent**: For Claude Desktop, use `agent_id="claude_desktop"` for normal writes and `agent_id="meko_agent"` for cross-project facts. Writes are attributed to `(datapack_id, user_id, agent_id)`. Personal memory reads and `conversation_list` span all of this user's agents; `conversation_get` remains agent-owned. `knowledgebase_search` ignores `agent_id` entirely. See `tools-agent-id-conventions.md`.
 4. **Personal memory vs. team-shared knowledge**: Un-promoted memories are scoped per-user — readable across all of that user's agents, but no other user can see them. With explicit confirmation, `memory_promote` moves exact memories into Shared Knowledge; the Cloud UI's Learnings tab is an alternative. Promoted content is visible to every datapack member. `knowledgebase_search` is the MCP read path for both Shared Knowledge and uploaded documents.
 5. **conversation_id IS the Langfuse trace ID**: every MCP tool call inside a conversation becomes a span under that trace. Observable in the Meko UI's Observe hub. See `tools-memory-vs-conversation.md`.
 6. **Adding documents to the team knowledge base is UI-only on Cloud today**: user uploads files via Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each). The MCP ingestion tools are not available on Cloud. See `tools-rag-workflow.md`.
 7. **Manual conversation capture**: Claude Desktop does not have automatic capture hooks. Create and save conversations explicitly when sessions are valuable.
-8. **Memory latencies are not cheap**: observed on prod 2026-05-07 — `memory_add` 12-21s/call (calls OpenAI), `memory_search` 2-6s/call. Budget accordingly.
+8. **Memory latencies are not cheap**: observed on prod 2026-05-07 — `memory_add` 12-21s/call (calls OpenAI), `memory_search` 2-6s/call. Budget accordingly. On the Free tier, `conversation_add_message` and `context_search` are each capped at 1,000 lifetime calls, and `memory_search` and `knowledgebase_search` at 1,000. Per-turn capture draws down the `conversation_add_message` cap, so on Free skip trivial turns. When a call returns `free_tier_limit_reached`, report it and stop calling that tool; it can arrive as HTTP 403 but isn't an authentication problem.
 9. **Known limitations**: see `tools-known-limitations.md` before attempting write operations on tools that appear in the catalog but aren't available on Cloud.
 10. **Error recovery**: Connection errors are common with memory tools — see `tools-troubleshooting.md` for retry strategies and fallbacks.
 
@@ -257,7 +277,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 24 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 25 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-rag-workflow.md` | End-to-end RAG pipeline flow |

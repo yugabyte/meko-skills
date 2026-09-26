@@ -20,7 +20,7 @@ specific language governing permissions and limitations under the License.
 # Reference Sections
 
 ## Tool Selection & Catalog
-- [tools-overview.md](tools-overview.md) — Complete catalog of all 24 tools available in production, with a decision tree
+- [tools-overview.md](tools-overview.md) — Complete catalog of all 25 tools available in production, with a decision tree
 
 ## Tool-Specific Guidance
 - [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message
@@ -32,7 +32,7 @@ specific language governing permissions and limitations under the License.
 
 ## Conventions & Deduplication
 - [tools-agent-id-conventions.md](tools-agent-id-conventions.md) — agent_id naming rules, hyphen prohibition, and namespace isolation
-- [tools-user-id-conventions.md](tools-user-id-conventions.md) — user_id vs agent_id: when to pass each, and how they scope memory
+- [tools-user-id-conventions.md](tools-user-id-conventions.md) — how the server resolves user_id from your credentials, and how it and agent_id scope memory
 - [tools-conversation-dedup.md](tools-conversation-dedup.md) — Seed-based deterministic trace IDs for Langfuse deduplication
 
 ## Practical Usage
