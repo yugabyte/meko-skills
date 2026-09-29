@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Cookbook — meko-select-datapack-desktop
 
-Concrete transcripts of the four flows the skill supports on Claude Desktop.
+Concrete transcripts of the flows the skill supports on Claude Desktop.
 
 ## Flow 1 — First pin (no existing pin memory)
 
@@ -25,8 +25,8 @@ Concrete transcripts of the four flows the skill supports on Claude Desktop.
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [empty]
 
-> datapack_list(conversation_id="<conv-id>")
-[14 entries returned, filtering by "prod-research"]
+> datapack_search(conversation_id="<conv-id>", query="prod-research", limit=10, include_total=true)
+[1 row, has_more=false, next_cursor="", total=1]
 
 One match: `prod-research`. Pinning.
 
@@ -58,8 +58,8 @@ datapack_id flows through automatically.
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [returns id=mem_abc123, text="meko_active_datapack=8b1c…f4a2 name=prod-research …"]
 
-> datapack_list(conversation_id="<conv-id>")
-[14 entries returned, filtering by "q2-roadmap-deck"]
+> datapack_search(conversation_id="<conv-id>", query="q2-roadmap-deck", limit=10, include_total=true)
+[1 row, has_more=false, next_cursor="", total=1]
 
 One match: `q2-roadmap-deck`. Switching pin.
 
@@ -83,8 +83,8 @@ The `memory_update` is critical here — using `memory_add` again would create a
 > memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
 [empty]
 
-> datapack_list(conversation_id="<conv-id>")
-[1 entry returned]
+> datapack_search(conversation_id="<conv-id>", limit=10, include_total=true)
+[1 row, has_more=false, next_cursor="", total=1]
 
 Only one datapack: `meko-local-setup`. Auto-selecting.
 
@@ -133,3 +133,35 @@ This isn't a user-triggered flow — it's the per-turn lookup the skill teaches 
 ```
 
 Cache the UUID for the rest of the turn — don't call `memory_search` once per Meko tool call.
+
+## Flow 6: Browse and page
+
+**User:** `list my datapacks`
+
+**Skill:**
+```
+> datapack_search(conversation_id="<conv-id>", limit=10, include_total=true)
+[10 rows, has_more=true, next_cursor="eyJ2Ijox…", total=14]
+
+Your datapacks (showing 1-10 of 14):
+…
+```
+
+**User:** `next`
+
+```
+> datapack_search(conversation_id="<conv-id>", limit=10, cursor="eyJ2Ijox…")
+[4 rows, has_more=false, next_cursor=""]
+
+Your datapacks (showing 11-14 of 14):
+…
+
+Reply with: a number (11-14) to pin · a substring to search · `prev` to page
+            · `clear` to unset · `cancel` to leave the current pin alone
+```
+
+The skill remembers each cursor it used. On `prev` it drops the last one and repeats the call for page 1, which had no cursor. The total (14) is reused from page 1. A substring reply calls `datapack_search(query="<text>", limit=10, include_total=true)` and starts a new listing.
+
+## Flow 7: Older server without `datapack_search`
+
+The tool list has `datapack_list` but no `datapack_search`. The skill calls `datapack_list(conversation_id="<conv-id>")` once, then sorts, pages and filters that array in the conversation. The table and replies look the same.

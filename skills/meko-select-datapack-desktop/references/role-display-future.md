@@ -16,7 +16,7 @@ specific language governing permissions and limitations under the License.
 
 ## Today: render `grant` verbatim
 
-The deployed Meko `GET /datapacks` response includes a `grant` field on every datapack. Possible values (per maintainer guidance, 2026-05-26):
+The deployed Meko `GET /datapacks` response includes a `grant` field on every datapack, and so does every row that `datapack_search` and `datapack_list` return. Possible values (per maintainer guidance, 2026-05-26):
 
 - `"owner"` — datapacks the caller created.
 - `"maintainer"` — write access to a shared datapack including memories AND collective learnings/knowledge.
@@ -36,15 +36,11 @@ Do not invent values, do not normalize the casing, do not display `"Owner"` if t
 
 Note that the upstream Go source (the `Datapack` struct in `api_server/internal/models/models.go` of the `meko` API-server repo) does NOT declare `grant` — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
-## Other fields the live response includes
+## Counts are not on the list response
 
-Beyond the columns the skill renders by default, `datapack_list` returns counts that may be useful in some flows:
+Neither `datapack_search` nor `datapack_list` returns usable counts. The list handler on the Meko server doesn't run the per-datapack queries that fill `memory_count`, `knowledge_count`, `learnings_count` or `collective_memory_count`, so in the full-row shape all four are zero on every row. `datapack_search` returns summary rows that leave them out, and the MCP client strips them from `datapack_list`.
 
-- `memory_count` — total memories the caller has under this datapack (per `(user_id, agent_id)` scoping).
-- `knowledge_count` — knowledge-base entries on the datapack.
-- `learnings_count` — promoted-to-shared memories on the datapack.
-
-These aren't in the spec column set. Don't add them silently. If the user asks for counts, render them on request — and read the numbers from the live response, never invent them.
+If the user asks for counts, call `datapack_describe(datapack_id=...)` on the rows they care about. That is the call that runs the count queries. Don't add count columns to the table, don't invent numbers, and don't report zero from a list row.
 
 ## Sharing UI vs API state
 

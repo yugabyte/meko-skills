@@ -22,8 +22,10 @@ Concrete transcripts of the flows the skill supports. All examples assume `agent
 
 **Skill:**
 ```
-> datapack_list(conversation_id="<conv-id>")
-[14 entries returned]
+> datapack_search(conversation_id="<conv-id>", limit=10, include_total=true)
+[10 rows, has_more=true, next_cursor="eyJ2Ijox…", total=14]
+
+No datapack currently pinned to this project (working directory).
 
 Your datapacks (showing 1-10 of 14):
 
@@ -77,11 +79,11 @@ onward the hook injection makes it automatic.
 
 **User:** `use the prod-research datapack`
 
-**Skill:** Goes straight to substring filter; no need to render the full list.
+**Skill:** Goes straight to a server-side search; no need to render the first page.
 
 ```
-> datapack_list(conversation_id="<conv-id>")
-[14 entries returned, filtering by "prod-research"]
+> datapack_search(conversation_id="<conv-id>", query="prod-research", limit=10, include_total=true)
+[1 row, has_more=false, next_cursor="", total=1]
 
 One match: `prod-research`. Pinning.
 ```
@@ -90,6 +92,32 @@ Then writes the pin file (same path as Flow 1: `pin-claude_code_meko-mcp-server.
 
 If the substring matches 2+ rows, the skill re-renders just those rows numbered from 1 and re-prompts. **Never auto-pick on ambiguity.**
 
+## Flow 2b: Page forward and back
+
+Continuing Flow 1, the user replies `next`. The skill passes the `next_cursor` from page 1 and remembers it:
+
+```
+> datapack_search(conversation_id="<conv-id>", limit=10, cursor="eyJ2Ijox…")
+[4 rows, has_more=false, next_cursor=""]
+
+No datapack currently pinned to this project (working directory).
+
+Your datapacks (showing 11-14 of 14):
+
+#   Name                                   Role    Created       Active?
+11  design-reviews                         owner   2026-02-24
+12  sales-enablement                       owner   2026-02-20
+13  hackathon-2026                         owner   2026-02-11
+14  scratch                                owner   2026-02-02
+
+Reply with: a number (11-14) to pin · a substring to search · `prev` to page
+            · `clear` to unset · `cancel` to leave the current pin alone
+```
+
+The skill offers no `next` because `has_more` is false. On `prev`, it drops the last remembered cursor and calls `datapack_search(conversation_id="<conv-id>", limit=10)` again with no cursor, because page 1 had none. The total (14) is reused from page 1.
+
+A search pages the same way: pass the same `query` together with the cursor.
+
 ## Flow 3 — Single-datapack auto-select
 
 **User:** (first Meko write attempt, no pin yet)
@@ -97,8 +125,8 @@ If the substring matches 2+ rows, the skill re-renders just those rows numbered 
 **Skill:** invokes proactively when no pin exists.
 
 ```
-> datapack_list(conversation_id="<conv-id>")
-[1 entry returned]
+> datapack_search(conversation_id="<conv-id>", limit=10, include_total=true)
+[1 row, has_more=false, next_cursor="", total=1]
 
 Only one datapack: `meko-local-setup`. Auto-selecting.
 
@@ -150,3 +178,7 @@ The pin is the project default; per-call overrides are still allowed.
 ```
 
 After the override call, the active pin (`prod-research`) still applies to subsequent calls. Tell the user: *"Used q2-roadmap-deck for that one query. Active pin is still prod-research."*
+
+## Flow 7: Older server without `datapack_search`
+
+The tool list has `datapack_list` but no `datapack_search`. The skill uses the fallback flow: one `datapack_list(conversation_id="<conv-id>")` call, then sorting, paging and substring filtering on that array in the conversation. The table, header lines and replies look the same as in Flows 1-5.

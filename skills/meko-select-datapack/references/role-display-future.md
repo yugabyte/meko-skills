@@ -16,7 +16,7 @@ specific language governing permissions and limitations under the License.
 
 ## Today: render `grant` verbatim
 
-The deployed Meko `GET /datapacks` response includes a `grant` field on every datapack. Possible values (per maintainer guidance, 2026-05-26):
+The deployed Meko `GET /datapacks` response includes a `grant` field on every datapack, and so does every row that `datapack_search` and `datapack_list` return. Possible values (per maintainer guidance, 2026-05-26):
 
 - `"owner"` — datapacks the caller created.
 - `"maintainer"` — write access to a shared datapack including memories AND collective learnings/knowledge.
@@ -38,7 +38,7 @@ Note that the upstream Go source (`/Users/amiram.mizne/sandbox/GitHub/meko/api_s
 
 ## Counts on the list response
 
-`datapack_list` does not carry usable count fields. The list handler on the Meko server doesn't run the per-datapack queries that populate `memory_count`, `knowledge_count`, `learnings_count`, or `collective_memory_count` — all four are zero on every row (`models.Datapack` declares them without `omitempty`, so the zeros survive JSON marshalling). The MCP client strips all four before returning so callers aren't misled.
+Neither `datapack_search` nor `datapack_list` carries usable count fields. The list handler on the Meko server doesn't run the per-datapack queries that populate `memory_count`, `knowledge_count`, `learnings_count`, or `collective_memory_count`. In the full-row shape all four are zero on every row (`models.Datapack` declares them without `omitempty`, so the zeros survive JSON marshalling). `datapack_search` returns summary rows that leave them out, and the MCP client strips all four from `datapack_list` so callers aren't misled.
 
 If the user asks for counts, call `datapack_describe(datapack_id=...)` on the specific rows they care about — that's the path that runs the count queries. Don't invent numbers or claim zero from the list response.
 
