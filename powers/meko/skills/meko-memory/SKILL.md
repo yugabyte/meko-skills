@@ -4,7 +4,7 @@ description: Use Meko long-term memory and team knowledge from Kiro. Covers sess
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.0.0"
+  version: "1.1.0"
   tags: mcp, memory, knowledge-base, datapack, meko, kiro
 ---
 <!--
@@ -92,10 +92,18 @@ Each datapack has its own memory store and knowledge base. When you omit
 `datapack_id`, the server uses the user's default datapack.
 `knowledgebase_search` is the exception: it requires `datapack_id`.
 
-- `datapack_list(conversation_id=...)` returns the datapacks the user can
-  access, with each one's `grant` (`owner`, `maintainer`, `contributor`, or
-  `viewer`). It returns `conversation_id_required` when you omit
-  `conversation_id`.
+- `datapack_search(conversation_id=..., query=...)` finds datapacks by part of
+  the name (`name=` for an exact name) and returns one page:
+  `{datapacks, has_more, next_cursor, total}`. Each row has `datapack_id`,
+  `datapack_name` and the user's `grant` (`owner`, `maintainer`,
+  `contributor`, or `viewer`). For the next page, repeat the call with
+  `cursor=<next_cursor>`; it is `""` on the last page. Use it to find a
+  datapack id in an account of any size.
+- `datapack_list(conversation_id=...)` returns every datapack as one array,
+  which is fine for a small account. Above 1000 datapacks it returns
+  `too_many_datapacks`; use `datapack_search`. On an older server without
+  `datapack_search`, use `datapack_list`. Both tools return
+  `conversation_id_required` when you omit `conversation_id`.
 - `datapack_describe` returns one datapack's details.
 - Use one datapack consistently within a session. Put projects that must not
   see each other's content in separate datapacks: `agent_id` labels writes but
