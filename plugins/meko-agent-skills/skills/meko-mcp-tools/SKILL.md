@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.1.0"
+  version: "3.3.0"
   tags: mcp, tools, datapack, memory, conversation, rag, meko
 ---
 <!--
@@ -254,7 +254,7 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 24 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 25 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-datapack-workflow.md` | Datapack lifecycle and datapack_id routing |

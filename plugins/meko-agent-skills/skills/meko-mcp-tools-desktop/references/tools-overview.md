@@ -14,14 +14,14 @@ specific language governing permissions and limitations under the License.
 -->
 # Complete Tool Catalog and Decision Tree
 
-**24 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Memory (8), Conversation (6), Knowledge Base (2), Datapack (5), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
+**25 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Memory (8), Conversation (6), Knowledge Base (2), Datapack (6), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
 
 ## Quick health check before using tools
 
 Before starting a session, verify that the Meko MCP tools are working:
 
 1. `memory_search(query="test", agent_id="<your-session-agent-id>", conversation_id="<session-conversation-id>")` — Confirms memory subsystem is up. Use the `agent_id` and `conversation_id` from the SessionStart `additionalContext`. May fail with "connection already closed" — see `tools-troubleshooting.md`.
-2. `datapack_list(conversation_id="<this conversation's id>")` — Confirms Meko API connectivity. Returns the datapacks your token has access to.
+2. `datapack_search(conversation_id="<this conversation's id>", limit=1)`: confirms Meko API connectivity and returns one datapack your token has access to. On a server without `datapack_search`, call `datapack_list(conversation_id="<this conversation's id>")` instead.
 
 ## Decision tree: which tool do I need?
 
@@ -41,6 +41,7 @@ User wants to...
 │   ├── Upload a generated file (report, CSV, PDF)? -> artifact_put (write)
 │   └── Retrieve a previously uploaded file? -------> artifact_get (read)
 └── Manage datapacks?
+    ├── Find a datapack id by name? -------> datapack_search(query=...) (read)
     └── CRUD datapack? --------------------> datapack_create/list/describe/update/delete
 ```
 
@@ -73,16 +74,17 @@ Agent lifecycle and KB **ingestion / index lifecycle** (adding sources, uploads,
 | `conversation_create(agent_id, user_id=None, app_id=None, run_id=None, title=None, metadata=None, session_id="")` | Create conversation container (Langfuse session) |
 | `conversation_add_message(conversation_id, agent_id, input, output=None, reasoning=None, metadata=None, seed=None, trace_id="")` | Add a message turn (Langfuse trace) |
 | `conversation_get(conversation_id, agent_id, include_messages=False, limit=100, offset=0)` | Retrieve conversation, optionally with messages |
-| `conversation_list(agent_id=None, limit=20, offset=0, conversation_id="", datapack_id=None)` | List conversations for agent within a datapack. `datapack_id` (UUID) is optional — defaults to the pinned/tenant datapack; use `datapack_list` to look it up. `conversation_id` optional (omit for browse). |
+| `conversation_list(agent_id=None, limit=20, offset=0, conversation_id="", datapack_id=None)` | List conversations for agent within a datapack. `datapack_id` (UUID) is optional — defaults to the pinned/tenant datapack; use `datapack_search(query=...)` to look it up. `conversation_id` optional (omit for browse). |
 | `conversation_update(conversation_id, agent_id, title=None, metadata=None)` | Update title or metadata |
 | `conversation_delete(conversation_id, agent_id)` | Delete entire conversation (destructive) |
 
-## Datapack Management Tools (5)
+## Datapack Management Tools (6)
 
 | Tool | Purpose |
 |------|---------|
 | `datapack_create(name)` | Create new datapack |
-| `datapack_list(conversation_id, datapack_id=None)` | List all datapacks. `conversation_id` is required for trace nesting; omit `datapack_id` to use the endpoint default. |
+| `datapack_search(conversation_id, query="", name="", limit=20, cursor="", grant="", sort="created", include_total=False, datapack_id=None)` | Find datapacks and page through them. Returns `{datapacks, has_more, next_cursor, total}`. Use `query` for part of a name, `name` for an exact name, and `cursor` (the previous page's `next_cursor`) for the next page. `limit` is 1-100. `grant` is `owner` or `shared`; `sort` is `created` (newest first) or `name`. Pass `include_total=True` only when you must show "N of M". Rows carry no connection fields and no counts. Servers older than this tool don't have it; use `datapack_list` there. |
+| `datapack_list(conversation_id, datapack_id=None, query="", limit=0)` | Return datapacks as one array. Fine for a small account. `query` filters by part of a name and `limit` caps the rows (at most 100). With neither, an account that can see more than 1000 datapacks (the server default limit) gets a `too_many_datapacks` error; use `datapack_search` then. `conversation_id` is required for trace nesting. |
 | `datapack_describe(datapack_id, include_status=False)` | Describe datapack by UUID |
 | `datapack_update(datapack_id, name=None, description=None)` | Rename a datapack and/or update its description. Pass at least one of `name` / `description`. |
 | `datapack_delete(datapack_id)` | Delete datapack by UUID (irreversible) |
@@ -113,7 +115,7 @@ Some things the Meko platform can do are not wired into the MCP tool surface tod
 | Langfuse project-key generation | `yugabyte/meko` API server | REST: `POST /datapacks/:datapack_id/langfuse/project-keys` |
 | Account / billing / tier management | Meko UI only | Not available via MCP or public REST |
 
-The MCP-exposed `datapack_create` / `datapack_list` / `datapack_describe` / `datapack_update` / `datapack_delete` tools above are a deliberate subset — the common CRUD that an agent reasonably needs mid-conversation. Anything involving agent or KB lifecycle is control-plane territory.
+The MCP-exposed `datapack_create` / `datapack_search` / `datapack_list` / `datapack_describe` / `datapack_update` / `datapack_delete` tools above are a deliberate subset — the common CRUD that an agent reasonably needs mid-conversation. Anything involving agent or KB lifecycle is control-plane territory.
 
 For knowledge-base content on Cloud, the canonical path is **UI upload**: Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). `knowledgebase_search` queries the resulting index from MCP.
 

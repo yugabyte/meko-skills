@@ -41,11 +41,11 @@ Conversations are backed by Langfuse sessions and traces. They preserve full str
 
 ```
 conversation_create(agent_id="support_bot", user_id="alice_123", title="Pricing discussion",
-    datapack_id="<uuid from datapack_list>")
+    datapack_id="<uuid from datapack_search>")
 -- Returns: {"id": "conv-uuid-here"}
 
 conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot",
-    datapack_id="<uuid from datapack_list>",
+    datapack_id="<uuid from datapack_search>",
     input="What are your pricing tiers?",
     output="We offer Starter ($10/mo), Pro ($50/mo), and Enterprise (custom).",
     reasoning="Retrieved pricing page data. No special discounts apply.")
