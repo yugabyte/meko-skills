@@ -56,7 +56,7 @@ Empirically verified 2026-07-23 on Cloud prod: memories written under two distin
 
 ### Personal conversation reads — `conversation_get`, `conversation_list`
 
-- `conversation_get` is agent-owned: pass the exact `agent_id` that created the conversation.
+- `conversation_get`, `conversation_add_message`, `conversation_update`, and `conversation_delete` are agent-owned: pass the exact `agent_id` that created the conversation, or the call returns `agent_id_mismatch`.
 - `conversation_list` is not agent-filtered and returns the datapack's conversations for this user across agents.
 
 ### Team-shared reads — `knowledgebase_search`
@@ -97,15 +97,17 @@ knowledgebase_search(agent_id=anything, query=...)
 
 If the user asks "what do you know about X?":
 
-1. **`memory_search(agent_id="claude_desktop", query="X")`** — returns all of this user's personal memories across every agent. `agent_id` attributes the trace.
-2. **`knowledgebase_search(agent_id="<anything>", datapack_id="<datapack>", query="X")`** — returns team-shared knowledge. Useful when the answer may have been promoted by the user or a teammate.
+call **`context_search(agent_id="claude_desktop", conversation_id="<id>", datapack_id="<datapack>", query="X")`**. It returns separate buckets:
 
-Always tell the user which surface you searched: personal memory or team-shared knowledge.
+- memory: all of this user's personal memories across every agent;
+- knowledge base: team-shared knowledge, including anything the user or a teammate promoted;
+- conversation: matching past turns from any user or agent on the datapack.
+
+Always tell the user which surface each finding came from. Confirm an empty memory or KB bucket with `memory_search` or `knowledgebase_search` before saying nothing is there.
 
 ## Optional sub-scoping
 
 Optional parameters can narrow a call further:
-- `user_id` — explicitly scope writes/reads to a specific end-user if your agent serves multiple (rare in Claude Desktop; more common in API products)
 - `run_id` — **read/delete filter only**, and it filters on the row's
   `meko_conversation_id`, so the value to pass is a *conversation id*, not a
   free-form run label. On `memory_add` it is Langfuse trace metadata only and is
@@ -113,7 +115,7 @@ Optional parameters can narrow a call further:
   `memory_search(run_id=X)` returns nothing, silently. Scope writes with
   `conversation_id` instead (MEKO-473).
 
-Available on `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all`, `conversation_create`, `conversation_list`.
+Accepted by `memory_add`, `memory_search`, `memory_get_all`, `memory_delete_all`, and `conversation_create`. `memory_get_all` ignores it. No tool takes a `user_id` argument; the server resolves it from your credentials.
 
 ## Things I checked and found in-data on real Cloud datapacks
 

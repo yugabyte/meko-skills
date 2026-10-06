@@ -40,8 +40,8 @@ Apply these rules before the longer guidance below. They are service-contract sa
 
 Inspect the response envelope before its contents:
 
-1. If `error` or an error-shaped `detail` is present, the search **failed** and its findings are **unknown**. Say exactly that. Never say "nothing was found," "no results," or "the store is empty."
-2. Do not retry quota (`free_tier_limit_reached`) or permission errors. Report the error and stop. Retry only documented transient failures, with a bounded backoff.
+1. If `error` or an error-shaped `detail` is present, or the whole response is an error string (for example `Error searching memories: ...` or `[Errno 111] Connection refused`), the search **failed** and its findings are **unknown**. Say exactly that. Never say "nothing was found," "no results," or "the store is empty."
+2. Do not retry quota (`free_tier_limit_reached`), permission (403), or validation errors. Report the error and stop. The one exception is `datapack_access_denied`: retry it once, because the server's access check also fails closed on a transient database error. Retry only documented transient failures (see `tools-troubleshooting.md`), with a bounded backoff. For `PAT_RATE_LIMITED`, wait out the retry-after (about 60s) before retrying.
 3. Only a successful response with an explicit empty `results` array proves a legitimate empty search.
 
 ### 2. Treat `memory_get_all` as a recent window, never an export
@@ -57,6 +57,7 @@ If no candidate supports an answer, abstain: say the retrieved evidence does not
 ### 4. Verify writes and enforce real isolation
 
 - A success-shaped write response is not proof. Read back memories and conversations. For artifacts, compute SHA-256 locally, require the matching `content_hash`, then read back important bytes. A missing hash means the upload is unconfirmed.
+- A read-back must use the same `datapack_id` as the write. Checking the default datapack after writing to a pinned one proves nothing.
 - `agent_id` attributes writes; it is not an access boundary. Put projects, tenants, or security domains that must not co-discover content in separate datapacks.
 
 ## Session identity on Kiro

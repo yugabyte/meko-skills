@@ -32,12 +32,12 @@ You (or an earlier run) created duplicates by using `memory_add` instead of `mem
 
 The cookbook's Flow 2 demonstrates the correct switch path.
 
-## Symptom: A pinned datapack returns "not found" when used
+## Symptom: A pinned datapack returns `datapack_access_denied` when used
 
-The pin became stale — the datapack was deleted in another client. Tell the user:
+The pin became stale: the datapack was deleted, or its share to you was revoked, in another client. The server checks ownership and shares on every call that passes a `datapack_id`, so the call fails with `datapack_access_denied` (older servers returned a not-found error). The check also fails closed on a transient server database error, so retry the call once before treating the pin as stale. Tell the user:
 
 ```
-The pinned datapack `<name>` (`<id>`) no longer exists on the server.
+The pinned datapack `<name>` (`<id>`) no longer exists or is no longer shared with you.
 Run `meko-select-datapack-desktop` to pick a fresh one, or `clear` to unpin.
 ```
 
@@ -54,7 +54,7 @@ The user has zero datapacks. Print:
 ```
 You don't have any datapacks yet. Create one with:
 
-  datapack_create(name="<your-datapack-name>")
+  datapack_create(name="<your-datapack-name>", conversation_id="<conversation id>")
 
 Or visit the Meko Cloud console (Datapacks → New datapack).
 ```

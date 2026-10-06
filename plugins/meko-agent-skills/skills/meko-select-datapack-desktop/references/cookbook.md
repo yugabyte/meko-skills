@@ -22,7 +22,7 @@ Concrete transcripts of the four flows the skill supports on Claude Desktop.
 
 **Skill:**
 ```
-> memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
+> memory_search(query="meko_active_datapack", agent_id="claude_desktop", conversation_id="<conv-id>", limit=1)
 [empty]
 
 > datapack_list(conversation_id="<conv-id>")
@@ -37,7 +37,7 @@ One match: `prod-research`. Pinning.
              metadata='{"type":"active-datapack-pin"}')
 [returns id=mem_abc123]
 
-> memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
+> memory_search(query="meko_active_datapack", agent_id="claude_desktop", conversation_id="<conv-id>", limit=1)
 [verifies the row exists]
 
 Pinned datapack `prod-research` (`8b1c…f4a2`) for Claude Desktop.
@@ -55,7 +55,7 @@ datapack_id flows through automatically.
 
 **Skill:**
 ```
-> memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
+> memory_search(query="meko_active_datapack", agent_id="claude_desktop", conversation_id="<conv-id>", limit=1)
 [returns id=mem_abc123, text="meko_active_datapack=8b1c…f4a2 name=prod-research …"]
 
 > datapack_list(conversation_id="<conv-id>")
@@ -80,7 +80,7 @@ The `memory_update` is critical here — using `memory_add` again would create a
 
 **Skill:**
 ```
-> memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
+> memory_search(query="meko_active_datapack", agent_id="claude_desktop", conversation_id="<conv-id>", limit=1)
 [empty]
 
 > datapack_list(conversation_id="<conv-id>")
@@ -104,7 +104,7 @@ Pinned datapack `meko-local-setup` (`a17d…cc91`). Run this skill again with
 
 **Skill:**
 ```
-> memory_search(query="meko_active_datapack", agent_id="claude_desktop", limit=1)
+> memory_search(query="meko_active_datapack", agent_id="claude_desktop", conversation_id="<conv-id>", limit=1)
 [returns id=mem_abc123]
 
 > memory_delete_by_id(

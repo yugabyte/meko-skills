@@ -25,10 +25,10 @@ specific language governing permissions and limitations under the License.
 Memory is backed by pgvector. Search is hybrid: semantic similarity, keyword matching, and a boost for memories that mention the entities named in your query (people, projects, tools). It retrieves relevant facts by meaning, not by conversation order.
 
 ```
-memory_add(agent_id="support_bot",
-    text="Customer Alice (alice@acme.com) prefers email, has Pro plan.", user_id="alice_123")
+memory_add(agent_id="claude_desktop", conversation_id="<id>",
+    text="Customer Alice (alice@acme.com) prefers email, has Pro plan.")
 
-memory_search(query="What plan does Alice have?", agent_id="support_bot")
+memory_search(query="What plan does Alice have?", agent_id="claude_desktop", conversation_id="<id>")
 ```
 
 ## Use `conversation_create` + `conversation_add_message` when storing:
@@ -40,11 +40,11 @@ memory_search(query="What plan does Alice have?", agent_id="support_bot")
 Conversations are backed by Langfuse sessions and traces. They preserve full structure: who said what, in what order, with what reasoning.
 
 ```
-conversation_create(agent_id="support_bot", user_id="alice_123", title="Pricing discussion",
+conversation_create(agent_id="claude_desktop", title="Pricing discussion",
     datapack_id="<uuid from datapack_list>")
 -- Returns: {"id": "conv-uuid-here"}
 
-conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot",
+conversation_add_message(conversation_id="conv-uuid-here", agent_id="claude_desktop",
     datapack_id="<uuid from datapack_list>",
     input="What are your pricing tiers?",
     output="We offer Starter ($10/mo), Pro ($50/mo), and Enterprise (custom).",
@@ -59,7 +59,7 @@ conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot
 |--------|------|
 | "remember that...", "note that...", "keep in mind..." | `memory_add` |
 | "store this conversation", "save this chat" | `conversation_create` + `conversation_add_message` |
-| "what do you know about X?", "recall..." | `memory_search` |
+| "what do you know about X?", "recall..." | `context_search` |
 | "show me our past conversation about..." | `conversation_list` + `conversation_get` |
 | "the user prefers...", "their budget is..." | `memory_add` |
 | "save my query and your response" | `conversation_add_message` |
@@ -107,14 +107,13 @@ One `memory_search` already spans this user's memories across all agents; no per
 
 ### When the user asks "what do you know about X?"
 
-A full sweep is two calls (budget for it — each is 2-6 seconds):
+Call `context_search`:
 
 ```
-memory_search(agent_id="claude_desktop", query="X", conversation_id=..., ...)
-knowledgebase_search(agent_id="<anything>", datapack_id="<uuid>", query="X", conversation_id=..., ...)
+context_search(agent_id="claude_desktop", query="X", conversation_id=..., datapack_id="<uuid>")
 ```
 
-The single `memory_search` includes everything this user and their other agents wrote in the datapack.
+Its memory bucket includes everything this user and their other agents wrote in the datapack. The KB bucket holds team-shared knowledge, and the conversation bucket holds matching past turns from anyone on the datapack. If the memory or KB bucket is empty, confirm with `memory_search` or `knowledgebase_search` before saying nothing is there, because `context_search` returns an empty list for a failed source.
 
 When you answer, be explicit about scope so the user knows why something is or isn't there:
 

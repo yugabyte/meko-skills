@@ -35,6 +35,10 @@
  *                      silently collide). See deriveAgentId().
  *   MEKO_API_KEY        API key for Cloud Meko auth (optional, omit for local)
  *   MEKO_API_TIMEOUT   Request timeout in seconds (default: 10)
+ *   MEKO_ADD_MESSAGE_TIMEOUT  Timeout for conversation_add_message in
+ *                      seconds (default: 60). Storing a large turn can take
+ *                      the server more than 15s. PreCompact runs in the
+ *                      foreground and keeps MEKO_API_TIMEOUT instead.
  *   MEKO_WATERMARK_DIR Watermark directory (default: ~/.claude/meko-capture)
  *   MEKO_MAX_CAPTURE_BATCH_SIZE  Max exchanges per drain (default 5, min 1)
  */
@@ -116,7 +120,7 @@ function resolveRepoRoot(cwd) {
  * in a separate package with no module dependencies on the installer.
  *
  *   - `envOverride` (typically MEKO_AGENT_ID) wins if non-empty.
- *   - Coding clients (claude_code, cursor, codex, kiro) →
+ *   - Coding clients (claude_code, cursor, codex, kiro, opencode) →
  *     `<client>:<repo-basename>`, where the basename comes from the
  *     nearest ancestor of `cwd` that contains `.git`. Lowercased,
  *     non-`[a-z0-9-]` runs collapse to `-`. Outside a repo → bare
@@ -134,7 +138,8 @@ function deriveAgentId(opts) {
     client !== "claude_code" &&
     client !== "cursor" &&
     client !== "codex" &&
-    client !== "kiro"
+    client !== "kiro" &&
+    client !== "opencode"
   ) {
     return COMMON_BUCKET_AGENT_ID;
   }
@@ -185,7 +190,7 @@ function deriveLegacyAgentId(opts) {
  */
 function resolveHookClient() {
   const client = (process.env.MEKO_HOOK_CLIENT || "").trim();
-  if (client === "cursor" || client === "codex" || client === "kiro") return client;
+  if (client === "cursor" || client === "codex" || client === "kiro" || client === "opencode") return client;
   return "claude_code";
 }
 
@@ -287,7 +292,7 @@ function logEffectiveAgentId(derivedAgentId, effectiveAgentId, reason) {
 
 // Coding clients that derive a `<client>:<repo>` agent_id. Kept in
 // sync with deriveAgentId's coding-client branch.
-const CODING_CLIENTS = ["claude_code", "cursor", "codex", "kiro"];
+const CODING_CLIENTS = ["claude_code", "cursor", "codex", "kiro", "opencode"];
 
 /**
  * Extract the client segment of an agent_id: the part before the first `:`,
@@ -411,6 +416,12 @@ function ownerChanged(cachedAgentId, resolvedAgentId, convId) {
 
 const MEKO_API_KEY = process.env.MEKO_API_KEY || "";
 const MEKO_API_TIMEOUT = parseInt(process.env.MEKO_API_TIMEOUT || "10", 10) * 1000;
+const MEKO_ADD_MESSAGE_TIMEOUT = (() => {
+  // A value that doesn't parse would reach the lease TTL as NaN and throw
+  // inside renewLease, so fall back to the default instead.
+  const n = Number.parseInt(process.env.MEKO_ADD_MESSAGE_TIMEOUT || "", 10);
+  return (Number.isFinite(n) && n > 0 ? n : 60) * 1000;
+})();
 const WATERMARK_DIR =
   process.env.MEKO_WATERMARK_DIR ||
   path.join(os.homedir(), ".claude", "meko-capture");
@@ -535,6 +546,57 @@ function extractToolResultContent(msg) {
     parts.push(truncate(summary, MAX_TOOL_RESULT_LEN));
   }
   return parts.length > 0 ? "TOOL RESULT:\n" + parts.join("\n") : "";
+}
+
+/**
+ * Render a Claude Code slash-command entry as the command the user typed.
+ * Claude Code writes `/commit fix typo` as
+ * `<command-message>…</command-message><command-name>/commit</command-name>`
+ * plus an optional `<command-args>fix typo</command-args>`. Returns "" for
+ * anything else.
+ */
+function slashCommandInput(text) {
+  if (typeof text !== "string" || !/^<command-(message|name)>/.test(text)) {
+    return "";
+  }
+  const name = /<command-name>([\s\S]*?)<\/command-name>/.exec(text);
+  if (!name) return "";
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text);
+  return [name[1].trim(), args ? args[1].trim() : ""].filter(Boolean).join(" ");
+}
+
+/** The rendered input for a turn. Only skill-loading commands are unwrapped. */
+function turnInput(turn) {
+  const text = extractText((turn.userMsg.message || {}).content);
+  return turn.injectedEntries.length > 0 ? slashCommandInput(text) || text : text;
+}
+
+/**
+ * Does this user entry open a new turn? `prev` is the parsed entry just
+ * before it, or null. `insideInjectedRun` is true while consecutive injected
+ * `isMeta` entries continue after a skill-loading command or tool call.
+ *
+ * Claude Code injects skill bodies ("Base directory for this skill: …") as
+ * `type: "user"` entries with `isMeta: true`. They belong to the turn that
+ * loaded the skill, not to a new one:
+ *   - the model called the Skill tool → the entry carries `sourceToolUseID`;
+ *   - the user typed `/skill` → the entry follows the `<command-name>` entry.
+ * Other `isMeta` user entries (scheduled and /loop prompts, image captions,
+ * messages from other sessions) still open a turn.
+ */
+function isTurnStart(entry, prev, insideInjectedRun = false) {
+  if (entry.type !== "user" || isToolResultMessage(entry)) return false;
+  if (entry.isMeta !== true) return true;
+  // A persisted cursor from an older capture version can point directly at an
+  // injected entry. Keep that entry as an anchor so its assistant reply is not
+  // discarded when this parse window has no preceding command or tool call.
+  if (prev == null) return true;
+  if (entry.sourceToolUseID) return false;
+  if (insideInjectedRun) return false;
+  const prevIsSlashCommand =
+    prev.type === "user" &&
+    slashCommandInput(extractText((prev.message || {}).content)) !== "";
+  return !prevIsSlashCommand;
 }
 
 // --- Turn-assembly exchange extraction ---
@@ -670,9 +732,10 @@ function parseTranscriptEntries(filePath, startLine) {
  * Group parsed entries into exchanges using turn-assembly, then render each
  * exchange to the { input, output, reasoning } shape addMessage sends.
  *
- * A real user message (no toolUseResult) starts a new exchange. All
- * subsequent assistant lines and tool-result user lines belong to that
- * exchange until the next real user message.
+ * A real user message (no toolUseResult) starts a new exchange. Skill bodies
+ * and related injected `isMeta` entries stay in the turn that loaded them.
+ * Other user messages start the next exchange. Assistant lines and tool-result
+ * user lines belong to the current exchange.
  *
  * `items` is the `{ entry, line }` list from parseTranscriptEntries. Returns
  * `{ exchanges, pendingFromLine }`:
@@ -696,14 +759,31 @@ function buildExchanges(items) {
   const turns = [];
   let current = null;
 
+  let prev = null;
+  let insideInjectedRun = false;
   for (const { entry, line } of items) {
-    if (entry.type === "user" && !isToolResultMessage(entry)) {
+    const startsTurn = isTurnStart(entry, prev, insideInjectedRun);
+    const isMetaUser =
+      entry.type === "user" &&
+      !isToolResultMessage(entry) &&
+      entry.isMeta === true;
+    insideInjectedRun =
+      isMetaUser && (entry.sourceToolUseID != null || !startsTurn);
+    prev = entry;
+    if (startsTurn) {
       if (current) turns.push(current);
       current = {
         userMsg: entry,
         userLine: line,
         assistantEntries: [],
         toolResultEntries: [],
+        // Skill bodies and other text Claude Code injects as isMeta user
+        // entries inside this turn (see isTurnStart).
+        injectedEntries: [],
+        // A skill turn is incomplete until an assistant entry arrives after
+        // its injected context. Assistant tool calls before the injection do
+        // not make the turn safe for a checkpoint to consume.
+        assistantAfterInjection: false,
         // Codex streaming turns end at a completion boundary (phase:
         // final_answer, or a task_complete event_msg). `codexStreaming` marks a
         // turn that emitted commentary and is therefore mid-stream until a
@@ -716,6 +796,9 @@ function buildExchanges(items) {
     } else if (current) {
       if (entry.type === "assistant") {
         current.assistantEntries.push(entry);
+        if (current.injectedEntries.length > 0) {
+          current.assistantAfterInjection = true;
+        }
         if (entry.codexPhase === CODEX_FINAL_ANSWER_PHASE) {
           current.codexComplete = true;
         } else if (entry.codexPhase === CODEX_COMMENTARY_PHASE) {
@@ -725,6 +808,8 @@ function buildExchanges(items) {
         current.codexComplete = true;
       } else if (entry.type === "user" && isToolResultMessage(entry)) {
         current.toolResultEntries.push(entry);
+      } else if (entry.type === "user") {
+        current.injectedEntries.push(entry);
       }
     }
   }
@@ -744,10 +829,11 @@ function buildExchanges(items) {
   const last = turns.length > 0 ? turns[turns.length - 1] : null;
   const lastIncomplete = last
     ? last.assistantEntries.length === 0 ||
+      (last.injectedEntries.length > 0 && !last.assistantAfterInjection) ||
       (last.codexStreaming && !last.codexComplete)
     : false;
   if (last && lastIncomplete) {
-    const lastInput = extractText((last.userMsg.message || {}).content);
+    const lastInput = turnInput(last);
     if (lastInput && !skipPattern.test(lastInput)) {
       pendingFromLine = last.userLine;
     }
@@ -764,7 +850,7 @@ function buildExchanges(items) {
       pendingFromLine !== null && t === turns.length - 1;
     if (isPendingTrailing) continue;
 
-    const input = extractText((ex.userMsg.message || {}).content);
+    const input = turnInput(ex);
     if (!input || skipPattern.test(input)) continue;
     if (ex.assistantEntries.length === 0) continue;
 
@@ -788,6 +874,15 @@ function buildExchanges(items) {
     for (const trEntry of ex.toolResultEntries) {
       const resultText = extractToolResultContent(trEntry);
       if (resultText) reasoningParts.push(resultText);
+    }
+
+    for (const injEntry of ex.injectedEntries) {
+      const text = extractText((injEntry.message || {}).content);
+      if (text) {
+        reasoningParts.push(
+          "INJECTED CONTEXT:\n" + truncate(text, MAX_TOOL_RESULT_LEN)
+        );
+      }
     }
 
     results.push({
@@ -971,10 +1066,18 @@ function writeWatermark(wmPath, convId, lineNum, agentId, datapackPin = null, ag
 /** Real user-turn line indexes from a parseTranscriptEntries result (PR #262). */
 function realUserTurnLines(entries) {
   const lines = [];
+  let prev = null;
+  let insideInjectedRun = false;
   for (const { entry, line } of entries) {
-    if (entry.type === "user" && !isToolResultMessage(entry)) {
-      lines.push(line);
-    }
+    const startsTurn = isTurnStart(entry, prev, insideInjectedRun);
+    if (startsTurn) lines.push(line);
+    const isMetaUser =
+      entry.type === "user" &&
+      !isToolResultMessage(entry) &&
+      entry.isMeta === true;
+    insideInjectedRun =
+      isMetaUser && (entry.sourceToolUseID != null || !startsTurn);
+    prev = entry;
   }
   return lines;
 }
@@ -1097,9 +1200,14 @@ The user pinned datapack **${pin.datapack_name}** (\`${pin.datapack_id}\`) for t
  * Low-level HTTP POST to the MCP endpoint.
  * Returns { body: <parsed JSON>, headers: <response headers> }.
  */
-function mcpPost(jsonBody) {
+function mcpPost(jsonBody, options) {
   const body = JSON.stringify(jsonBody);
+  const timeoutMs =
+    options && Number(options.timeoutMs) > 0
+      ? Number(options.timeoutMs)
+      : MEKO_API_TIMEOUT;
   return new Promise((resolve, reject) => {
+    let deadline = null;
     const url = new URL(MEKO_MCP_URL);
     const transport = url.protocol === "https:" ? https : http;
     const headers = {
@@ -1128,12 +1236,13 @@ function mcpPost(jsonBody) {
         path: url.pathname + url.search,
         method: "POST",
         headers,
-        timeout: MEKO_API_TIMEOUT,
+        timeout: timeoutMs,
       },
       (res) => {
         let data = "";
         res.on("data", (chunk) => (data += chunk));
         res.on("end", () => {
+          clearTimeout(deadline);
           inflightRequests.delete(req);
           if (res.statusCode >= 400) {
             const snippet = data.trim().replace(/\s+/g, " ").slice(0, 200);
@@ -1165,15 +1274,25 @@ function mcpPost(jsonBody) {
     );
 
     inflightRequests.add(req);
-    req.on("error", (err) => {
-      inflightRequests.delete(req);
-      reject(err);
-    });
-    req.on("timeout", () => {
+    const timedOut = () => {
+      clearTimeout(deadline);
       inflightRequests.delete(req);
       req.destroy();
       reject(new Error("MCP request timed out"));
+    };
+    // The socket timeout only measures idle time, and SSE pings reset it, so
+    // also cap the whole request. unref() and the close listener keep an
+    // aborted request (SessionStart's preload budget) from holding the
+    // process open until the deadline.
+    deadline = setTimeout(timedOut, timeoutMs);
+    deadline.unref();
+    req.on("close", () => clearTimeout(deadline));
+    req.on("error", (err) => {
+      clearTimeout(deadline);
+      inflightRequests.delete(req);
+      reject(err);
     });
+    req.on("timeout", timedOut);
     req.write(body);
     req.end();
   });
@@ -1183,7 +1302,10 @@ function parseMcpResponseBody(data) {
   const trimmed = data.trim();
   if (!trimmed) return null;
 
-  if (!trimmed.startsWith("event:") && !trimmed.startsWith("data:")) {
+  // An SSE stream may open with a comment line such as the server's
+  // keepalive `: ping - <timestamp>`, sent every 15s while a slow tool call
+  // is still running.
+  if (!/^(event|data|id|retry)?:/.test(trimmed)) {
     return JSON.parse(trimmed);
   }
 
@@ -1362,6 +1484,151 @@ function classifyPersistentCaptureFailure(err, opts) {
 }
 
 /**
+ * Grace period before a closed session whose transcript has vanished is
+ * finalized. Default 1 day; MEKO_TRANSCRIPT_MISSING_GRACE overrides (seconds).
+ */
+function transcriptMissingGraceSeconds() {
+  const raw = process.env.MEKO_TRANSCRIPT_MISSING_GRACE;
+  const n = raw == null || raw === "" ? NaN : Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) && n >= 0 ? n : 86400;
+}
+
+function coerceQueued(state) {
+  const n = Number(state && state.queued_exchanges);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Consecutive not_found drains required before opening a replacement. */
+const MISSING_CONVERSATION_RECOVERY_POLLS = 2;
+
+function missingConversationStreak(state) {
+  const n = Number(state && state.missing_conversation_streak);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Clear failure fields after a drain delivers all outstanding work.
+ *
+ * These fields describe the last attempt. Leaving them set after the queue
+ * drains makes sessionHealthBucket() report a resolved failure as degraded.
+ */
+function clearResolvedFailure(state) {
+  state.failure_class = null;
+  state.last_error = null;
+  state.next_retry_at = null;
+  state.attempt_count = 0;
+  state.blocked_reason = null;
+  state.recovered_from_conversation_id = null;
+  state.missing_conversation_streak = null;
+  return state;
+}
+
+/**
+ * Detect a conversation the server no longer has.
+ *
+ * `conversation_add_message` answers `not_found` when its conversation id is
+ * gone: deleted server-side, expired, or created against a different Langfuse
+ * project than the one the current datapack resolves to. classifyFailure() has
+ * no pattern for it, so it falls through to the "transient" default and the
+ * outbox retries the same dead id forever: three sessions reached 609, 441 and
+ * 440 attempts holding 105 turns that could never land.
+ *
+ * Callers treat a match as a signal to open a fresh conversation and move the
+ * undelivered tail into it (see recoverMissingConversation).
+ *
+ * The match keys on the server's detail, `Conversation <id> not found`
+ * (src/tools.py). The tool name in the error prefix also contains
+ * "conversation", so matching on the word alone would catch every not_found.
+ * The server sends the same detail when a Langfuse lookup fails transiently or
+ * the trace is too large to read (MEKO-452, MEKO-714), so a match is not proof
+ * the conversation is gone. Recovery waits until the same detail persists
+ * across MISSING_CONVERSATION_RECOVERY_POLLS drains, preserves the cursor, and
+ * never copies turns that the old conversation already accepted.
+ */
+function isMissingConversationError(err) {
+  const message = err && err.message ? String(err.message) : String(err || "");
+  const normalized = message.toLowerCase();
+  if (!/not[_\s-]?found/.test(normalized)) return false;
+  return /conversation\s+\S+\s+not\s+found/.test(normalized);
+}
+
+/**
+ * Recover from a conversation the server no longer has by opening a new one and
+ * moving the undelivered tail to it.
+ *
+ * The server can also return the same not_found detail for a transient Langfuse
+ * lookup failure. drainSession() calls this only after that detail has persisted
+ * across two drains, and this function keeps last_line_number so turns already
+ * accepted by the old conversation are not copied. conversation_add_message
+ * checks ownership before storing a turn, so the failed exchange and the rest
+ * of the undelivered tail remain safe to move.
+ *
+ * The new conversation is created without `session_id`. The server derives the
+ * id from `session_id`, so passing it again would return the conversation that
+ * just failed, and recovery would keep retrying the dead id.
+ *
+ * On create failure the caller keeps its normal retry path, so a network blip
+ * here costs a retry rather than the queue.
+ *
+ * @returns {Promise<{ok: boolean, state?: object, convId?: string, error?: string}>}
+ */
+async function recoverMissingConversation({
+  state,
+  sessionId,
+  agentId,
+  transcriptPath,
+  datapackId = null,
+}) {
+  let newConvId = null;
+  try {
+    newConvId = await createConversation(
+      sessionId || "unknown",
+      agentId,
+      peekTranscriptMetadata(transcriptPath),
+      datapackId,
+      { freshId: true },
+    );
+  } catch (err) {
+    return { ok: false, error: `conversation_create failed: ${err.message}` };
+  }
+  if (!newConvId) {
+    return { ok: false, error: "conversation_create returned no ID" };
+  }
+  // A create that returns the failed id did not provide a recovery target.
+  const sameId = (a, b) =>
+    String(a || "").replace(/-/g, "").toLowerCase() ===
+    String(b || "").replace(/-/g, "").toLowerCase();
+  if (sameId(newConvId, state.conversation_id)) {
+    return {
+      ok: false,
+      error: `conversation_create returned the missing conversation ${newConvId}`,
+    };
+  }
+  const next = {
+    ...state,
+    conversation_id: newConvId,
+    conversation_epoch: Number(state.conversation_epoch || 0) + 1,
+    in_flight: { seed: null, user_line: null, user_turn_id: null },
+    delivery: "pending",
+    failure_class: null,
+    last_error: null,
+    blocked_reason: null,
+    next_retry_at: null,
+    attempt_count: 0,
+    missing_conversation_streak: null,
+  };
+  // Suppress another replacement until this conversation accepts a turn. A
+  // fresh trace may not be visible yet when the next request reaches a
+  // different server replica.
+  next.recovered_from_conversation_id = state.conversation_id || null;
+  const written = captureState.writeState(sessionId, next);
+  if (!written.ok) {
+    return { ok: false, error: `failed to persist recovered conversation: ${written.error}` };
+  }
+  return { ok: true, state: written.state || next, convId: newConvId };
+}
+
+/**
  * Abort all pending MCP requests. Used by the preload timeout path so the
  * SessionStart hook can return promptly instead of waiting for a slow server
  * to finish responding.
@@ -1410,14 +1677,17 @@ async function mcpInitialize() {
   });
 }
 
-async function mcpCall(toolName, args) {
+async function mcpCall(toolName, args, options) {
   mcpRequestId++;
-  const result = await mcpPost({
-    jsonrpc: "2.0",
-    method: "tools/call",
-    params: { name: toolName, arguments: args },
-    id: mcpRequestId,
-  });
+  const result = await mcpPost(
+    {
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: toolName, arguments: args },
+      id: mcpRequestId,
+    },
+    options,
+  );
   return result.body;
 }
 
@@ -1479,21 +1749,29 @@ function peekTranscriptMetadata(transcriptPath) {
  * best-effort enrichment, not a correctness requirement.
  */
 async function fetchRecentMemories(agentId, datapackId = null, { limit = 10, budget = 2000 } = {}) {
+  // memory_get_all takes no `limit`, and FastMCP rejects an unknown argument
+  // with an isError result, so `limit` caps the page client-side instead.
   const payload = {
     agent_id: agentId,
     conversation_id: "00000000-0000-0000-0000-000000000000",
-    limit,
   };
   if (datapackId) payload.datapack_id = datapackId;
   const response = await mcpCall("memory_get_all", payload);
+  if (response && response.result && response.result.isError) {
+    const detail = ((response.result.content || [])[0] || {}).text || "";
+    process.stderr.write(`[meko-capture] memory preload failed: ${truncate(detail.replace(/\s+/g, " "), 300)}\n`);
+    return [];
+  }
   const result = extractToolResult(response);
   if (!result) return [];
 
   const entries = Array.isArray(result) ? result : result.memories || result.results || [];
   const summaries = [];
   let used = 0;
-  for (const entry of entries) {
-    const text = entry.memory || entry.text || entry.content || "";
+  for (const entry of entries.slice(0, limit)) {
+    // The meko API returns the text as `data`; `memory` is the mem0 shape
+    // servers returned before MEKO-216.
+    const text = entry.data || entry.memory || entry.text || entry.content || "";
     if (!text) continue;
     const line = `- ${String(text).replace(/\s+/g, " ").trim()}`;
     if (used + line.length + 1 > budget) break;
@@ -1503,18 +1781,31 @@ async function fetchRecentMemories(agentId, datapackId = null, { limit = 10, bud
   return summaries;
 }
 
-async function createConversation(sessionId, agentId, metadata = null, datapackId = null) {
+/**
+ * The server derives the conversation id from `session_id`, so the same session
+ * always maps to the same conversation. Pass `freshId: true` to omit
+ * `session_id` and have the server mint a new id instead. Recovery needs this:
+ * re-creating with the session id returns the conversation that just failed.
+ */
+async function createConversation(
+  sessionId,
+  agentId,
+  metadata = null,
+  datapackId = null,
+  { freshId = false } = {},
+) {
   const clientLabel = {
     claude_code: "Claude Code",
     cursor: "Cursor",
     codex: "Codex",
     kiro: "Kiro",
+    opencode: "OpenCode",
   }[resolveHookClient()] || "Coding agent";
   const payload = {
     agent_id: agentId,
     title: `${clientLabel} session (auto-captured)`,
-    session_id: sessionId,
   };
+  if (!freshId) payload.session_id = sessionId;
   if (metadata) {
     payload.metadata = JSON.stringify({
       source: "hook",
@@ -1641,7 +1932,7 @@ async function ensureConversationOwner({
   return { convId, agentId: cachedOwner, source: "derived", rebucketed: false };
 }
 
-async function addMessage(convId, agentId, exchange, datapackId = null) {
+async function addMessage(convId, agentId, exchange, datapackId = null, timeoutMs = null) {
   const seed = `${convId}:${exchange.user_uuid}`;
   const payload = {
     conversation_id: convId,
@@ -1658,7 +1949,9 @@ async function addMessage(convId, agentId, exchange, datapackId = null) {
         ? exchange.metadata
         : JSON.stringify(exchange.metadata);
   }
-  const response = await mcpCall("conversation_add_message", payload);
+  const response = await mcpCall("conversation_add_message", payload, {
+    timeoutMs: timeoutMs || MEKO_ADD_MESSAGE_TIMEOUT,
+  });
   // FAIL CLOSED. The MCP transport resolves successfully even when the tool
   // failed, and failures take several shapes: an `isError` result envelope, a
   // JSON body with an `error` field, or a non-JSON / missing-content / otherwise
@@ -1679,7 +1972,9 @@ async function addMessage(convId, agentId, exchange, datapackId = null) {
     );
   }
   if (result.error) {
-    throw new Error(`conversation_add_message failed: ${JSON.stringify(result.error)}`);
+    // Keep the server's detail: isMissingConversationError() keys on it.
+    const detail = typeof result.detail === "string" && result.detail ? `: ${result.detail}` : "";
+    throw new Error(`conversation_add_message failed: ${JSON.stringify(result.error)}${detail}`);
   }
   // Contracts: advance only after a structurally valid accepted response that
   // contains a message ID (server returns message_id; tolerate `id` aliases).
@@ -1869,7 +2164,7 @@ Call memory_add (with the session's agent_id + conversation_id) ONLY for the nar
 
 ### Recall and before destructive actions
 
-- User asks "what do you know about X?" → call memory_search first.
+- User asks "what do you know about X?" → call context_search first (memory, knowledge base, and past conversations in one call). Confirm an empty memory or knowledge-base result with memory_search or knowledgebase_search before saying nothing is stored.
 - Before any action that deletes, overwrites, or restructures user content (Write-overwrite, large Edit deletions, rm, git reset --hard, destructive SQL), call memory_search for relevant feedback and confirm with the user if any prior guidance applies.
 
 ### Use Meko, not local storage
@@ -1902,7 +2197,7 @@ ${preamble}
 Because nothing is capturing this session, explicit saves are the only path — this is the exception, not the normal mode:
 - User shares personal info, preferences, or role → call memory_add immediately
 - User shares org conventions or team standards → call memory_add immediately
-- User asks "what do you know about X?" → call memory_search first
+- User asks "what do you know about X?" → call context_search first
 
 ### Use Meko, not local storage
 
@@ -2336,6 +2631,8 @@ function persistExchangeCheckpoint(sessionId, state, nextLine, extras) {
     last_error: null,
     blocked_reason: null,
     last_failure_scope: null,
+    recovered_from_conversation_id: null,
+    missing_conversation_streak: null,
     last_success_at: new Date().toISOString(),
     consecutive_exchange_drops:
       extras.consecutive_exchange_drops != null
@@ -2375,7 +2672,7 @@ function persistExchangeCheckpoint(sessionId, state, nextLine, extras) {
  * Build a synthetic interrupted exchange for a trailing incomplete user turn.
  */
 function buildInterruptedExchange(turn, sessionId) {
-  const input = extractText((turn.userMsg.message || {}).content) || "";
+  const input = turnInput(turn) || "";
   return {
     user_uuid: turn.userMsg.uuid || "unknown",
     user_line: turn.userLine,
@@ -2496,6 +2793,7 @@ async function drainSession(options) {
       state.transcript_path ||
       null;
 
+    const persistedLifecycle = state.lifecycle;
     if (opts.lifecycle && opts.lifecycle !== state.lifecycle) {
       state.lifecycle = opts.lifecycle;
     } else if (mode === "session-end" && state.lifecycle === "active") {
@@ -2534,6 +2832,52 @@ async function drainSession(options) {
     }
 
     if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      // The transcript is the only source of turns, so a closed session whose
+      // transcript is gone has nothing left to deliver — ever. Left alone it
+      // sits at "pending" forever and holds the health rollup below healthy:
+      // 26 such tombstones had accumulated, the oldest 16.7 days old, none of
+      // them carrying a single deliverable turn.
+      //
+      // Only a session that is closing/closed AND has been idle past the grace
+      // period is finalized. An ACTIVE session whose transcript has not
+      // appeared yet must stay pending so it can still deliver, and the grace
+      // period covers a transcript that is briefly unreadable (an unmounted
+      // volume, a permissions blip) rather than genuinely gone.
+      const idleMs = state.last_activity_at
+        ? Date.now() - Date.parse(state.last_activity_at)
+        : 0;
+      const graceMs = transcriptMissingGraceSeconds() * 1000;
+      const finalizable =
+        (persistedLifecycle === "closing" || persistedLifecycle === "closed") &&
+        Number.isFinite(idleMs) &&
+        idleMs >= graceMs &&
+        coerceQueued(state) === 0;
+      if (stateExisted && finalizable) {
+        state.lifecycle = "closed";
+        state.delivery = "complete";
+        state.queued_exchanges = 0;
+        clearResolvedFailure(state);
+        captureState.writeState(sessionId, state);
+        process.stderr.write(
+          `[meko-capture] Finalizing ${sessionId}: transcript is gone and the session ` +
+          `closed ${Math.round(idleMs / 86400000)}d ago with nothing queued; ` +
+          `nothing left to deliver.\n`,
+        );
+        return makeDrainResult({
+          status: "noop",
+          session_id: sessionId,
+          last_line_number: state.last_line_number || 0,
+          lifecycle: state.lifecycle,
+          delivery: state.delivery,
+          error: "transcript missing; finalized",
+        });
+      }
+      // A recovery sweep marks abandoned sessions as closing while it drains
+      // them. Do not persist that override when the transcript is absent: the
+      // stored active lifecycle is the evidence that this session may return.
+      if (mode === "recover" && persistedLifecycle === "active") {
+        state.lifecycle = persistedLifecycle;
+      }
       if (stateExisted) captureState.writeState(sessionId, state);
       return makeDrainResult({
         status: "noop",
@@ -2762,6 +3106,7 @@ async function drainSession(options) {
           state.lifecycle = "closed";
         }
         state.queued_exchanges = 0;
+        clearResolvedFailure(state);
       }
       state.agent_id = effectiveAgentId;
       state.agent_id_source = effectiveSource;
@@ -2785,6 +3130,17 @@ async function drainSession(options) {
     }
 
     const exchanges = allExchanges.slice(0, maxBatch);
+    // PreCompact blocks the user, so it keeps the short timeout; background
+    // drains wait for a slow server to finish storing a large turn.
+    const addMessageTimeoutMs =
+      mode === "pre-compact" ? MEKO_API_TIMEOUT : MEKO_ADD_MESSAGE_TIMEOUT;
+    const leaseTtl = Math.max(
+      captureState.leaseTtlSeconds(),
+      Math.ceil(addMessageTimeoutMs / 1000) + 30,
+    );
+    // Set when renewal fails: "ownership" means another worker took the
+    // lease; anything else means this worker couldn't write it.
+    let leaseFailure = null;
     let captured = 0;
     let failed = 0;
     let dropped = 0;
@@ -2807,6 +3163,21 @@ async function drainSession(options) {
     captureState.writeState(sessionId, state);
 
     for (const exchange of exchanges) {
+      // Keep the lease ahead of a slow add_message so another drain can't
+      // reclaim it mid-batch. If renewal fails, stop without sending: either
+      // another drain owns the session, or this worker can't write the lease.
+      if (leaseToken) {
+        const renewed = captureState.renewLease(sessionId, leaseToken, {
+          ttlSeconds: leaseTtl,
+        });
+        if (!renewed.ok) {
+          leaseFailure = {
+            failure_class: renewed.failure_class === "ownership" ? "ownership" : "transient",
+            error: renewed.error || "lease renewal failed",
+          };
+          break;
+        }
+      }
       const canDropAfterBackoff = allowExchangeDropAfterBackoff;
       allowExchangeDropAfterBackoff = false;
       const seed = `${convId}:${exchange.user_uuid}`;
@@ -2824,6 +3195,7 @@ async function drainSession(options) {
           effectiveAgentId,
           exchange,
           datapackPin && datapackPin.datapack_id,
+          addMessageTimeoutMs,
         );
         const boundary = boundaryAfterExchange(turnLines, exchange.user_line);
         const nextLine =
@@ -2874,6 +3246,70 @@ async function drainSession(options) {
         consecutiveExchangeDrops = 0;
         cursorAdvanced = true;
       } catch (err) {
+        // A conversation the server no longer has never heals, so retrying the
+        // same id burns attempts and strands every queued turn. Open a fresh
+        // conversation and move the undelivered tail into it. Return immediately
+        // rather than falling through to the post-loop cursor advance.
+        //
+        // A single not_found can be a transient Langfuse lookup. Wait until the
+        // same detail persists across two drains before opening a replacement,
+        // so one blip does not fork a live conversation.
+        //
+        // Recover at most once before the replacement accepts a turn. If the
+        // replacement reports not_found first, the fresh trace may not be
+        // visible on another replica yet. Retry it rather than opening one
+        // conversation per attempt. A successful checkpoint clears the guard,
+        // so a later deletion can recover again.
+        const missingConversation = isMissingConversationError(err);
+        if (missingConversation) {
+          state.missing_conversation_streak = missingConversationStreak(state) + 1;
+        } else if (state.missing_conversation_streak) {
+          state.missing_conversation_streak = null;
+        }
+        const alreadyRecovered = Boolean(state.recovered_from_conversation_id);
+        const streakPersisted =
+          missingConversationStreak(state) >= MISSING_CONVERSATION_RECOVERY_POLLS;
+        if (missingConversation && alreadyRecovered) {
+          process.stderr.write(
+            `[meko-capture] Conversation ${convId} reports not_found, but it already replaced ` +
+            `${state.recovered_from_conversation_id}; retrying it instead of opening another.\n`,
+          );
+        } else if (missingConversation && !streakPersisted) {
+          process.stderr.write(
+            `[meko-capture] Conversation ${convId} reports not_found ` +
+            `(${missingConversationStreak(state)}/${MISSING_CONVERSATION_RECOVERY_POLLS}); ` +
+            `retrying it before opening a new conversation.\n`,
+          );
+        }
+        if (missingConversation && !alreadyRecovered && streakPersisted) {
+          const recovered = await recoverMissingConversation({
+            state,
+            sessionId,
+            agentId: effectiveAgentId,
+            transcriptPath,
+            datapackId: datapackPin && datapackPin.datapack_id,
+          });
+          if (recovered.ok) {
+            process.stderr.write(
+              `[meko-capture] Conversation ${convId} is gone server-side (${err.message}); ` +
+              `moving ${allExchanges.length - captured} queued exchange(s) into new conversation ` +
+              `${recovered.convId}.\n`,
+            );
+            return makeDrainResult({
+              status: "retry_wait",
+              session_id: sessionId,
+              captured,
+              queued_remaining: allExchanges.length - captured,
+              last_line_number: recovered.state.last_line_number || 0,
+              lifecycle: recovered.state.lifecycle,
+              delivery: recovered.state.delivery,
+            });
+          }
+          process.stderr.write(
+            `[meko-capture] Conversation ${convId} is gone server-side but recovery failed ` +
+            `(${recovered.error}); retrying.\n`,
+          );
+        }
         const persistent = classifyPersistentCaptureFailure(err, {
           exchange: true,
         });
@@ -2970,6 +3406,31 @@ async function drainSession(options) {
     // Dropped exchanges are resolved, not held: they can never be stored, so
     // they must not count as backlog or the session reads as permanently behind.
     const held = allExchanges.length - captured - dropped;
+    if (leaseFailure) {
+      // Progress so far is already checkpointed. Nothing is recorded as a
+      // delivery failure: the server never saw the next exchange.
+      const lost = leaseFailure.failure_class === "ownership";
+      process.stderr.write(
+        lost
+          ? `[meko-capture] drain lease lost after ${captured} exchange(s); leaving the rest to its new owner.\n`
+          : `[meko-capture] could not renew the drain lease after ${captured} exchange(s): ${leaseFailure.error}; stopping this batch.\n`,
+      );
+      return makeDrainResult({
+        status: "retry_wait",
+        session_id: sessionId,
+        captured,
+        dropped,
+        queued_remaining: held,
+        failure_class: leaseFailure.failure_class,
+        error: lost
+          ? "drain lease lost to another worker"
+          : `drain lease renewal failed: ${leaseFailure.error}`,
+        cursor_advanced: cursorAdvanced,
+        last_line_number: state.last_line_number || 0,
+        lifecycle: state.lifecycle,
+        delivery: state.delivery,
+      });
+    }
     if (failed === 0 && allExchanges.length <= maxBatch && pendingFromLine === null) {
       watermarkLine = safeLine;
       if (watermarkLine >= state.last_line_number) {
@@ -2986,6 +3447,7 @@ async function drainSession(options) {
         state.delivery = "idle";
         state.queued_exchanges = 0;
       }
+      clearResolvedFailure(state);
       captureState.writeState(sessionId, state);
       cursorAdvanced =
         captured > 0 || dropped > 0 || cursorAdvanced || synthesizedInterrupted;
@@ -3109,7 +3571,7 @@ async function main() {
   const drainOpts = {
     session_id: sessionId,
     transcript_path: transcriptPath,
-    mode: hookType === "recover" ? "drain" : hookType,
+    mode: hookType,
     lifecycle: hookInput.lifecycle,
     confirmed_dead: Boolean(hookInput.confirmed_dead),
     recorded_owner_only: Boolean(hookInput.recorded_owner_only),
@@ -3165,6 +3627,8 @@ module.exports = {
   buildExchanges,
   extractExchanges,
   addMessage,
+  isMissingConversationError,
+  recoverMissingConversation,
 };
 
 if (require.main === module) {

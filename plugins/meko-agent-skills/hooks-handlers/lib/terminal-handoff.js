@@ -359,7 +359,16 @@ async function runWorker(jobFile) {
         ? Math.max(0, dueMs - Date.now())
         : delayMs;
       const remaining = Math.max(0, WORKER_MAX_AGE_MS - (Date.now() - started));
-      await sleep(Math.min(untilDue, remaining));
+      if (untilDue >= remaining) {
+        // The retry falls after this worker's age ceiling (for example a
+        // session parked by --capture-cleanup). Sleeping would only hold a
+        // process for the rest of the day; timer recovery owns the retry.
+        process.stderr.write(
+          `[meko-capture] SessionEnd worker: next retry ${result.next_retry_at} is past the worker ceiling; leaving outbox pending.\n`,
+        );
+        break;
+      }
+      await sleep(untilDue);
       delayMs = Math.min(delayMs * 2, 60_000);
       continue;
     }
