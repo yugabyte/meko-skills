@@ -130,7 +130,7 @@ On Claude Code, do **not** proactively `memory_add` facts the user states — ca
 
 ## Automatic Conversation Capture
 
-The plugin captures conversations via three mechanisms — a periodic checkpoint (~10 min), a PreCompact hook, and a SessionEnd hook — storing the full transcript verbatim (user prompts as `input`, assistant text as `output`, tool calls and results as `reasoning`).
+The plugin captures conversations via three mechanisms — a periodic checkpoint (~10 min), a PreCompact hook, and a SessionEnd hook — storing the full transcript verbatim (user prompts as `input`, assistant text as `output`, tool calls and results as `reasoning`). Skill bodies, background-task notifications, and subagent reports that Claude Code writes into the transcript go to `reasoning` of the turn they belong to, never to `input`. A typed `/skill args` is captured with that command as its `input`.
 
 Each message's seed is `<conversation_id>:<user_message_uuid>`; all three mechanisms derive the same deterministic trace ID from it, so overlapping captures are idempotent. A shared watermark file tracks what has been saved.
 

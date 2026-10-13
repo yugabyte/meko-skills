@@ -548,15 +548,23 @@ function extractToolResultContent(msg) {
   return parts.length > 0 ? "TOOL RESULT:\n" + parts.join("\n") : "";
 }
 
+// Turn inputs that are Claude Code bookkeeping, not something the user typed.
+// A turn whose rendered input matches is never captured.
+const SKIP_INPUT_PATTERN =
+  /^<(system-reminder|command-|local-command|available-deferred)/;
+
 /**
- * Render a Claude Code slash-command entry as the command the user typed.
- * Claude Code writes `/commit fix typo` as
- * `<command-message>…</command-message><command-name>/commit</command-name>`
- * plus an optional `<command-args>fix typo</command-args>`. Returns "" for
- * anything else.
+ * Render a Claude Code skill or prompt command entry as the command the user
+ * typed. Claude Code writes `/commit fix typo` as
+ * `<command-message>commit</command-message><command-name>/commit</command-name>`
+ * plus an optional `<command-args>fix typo</command-args>`, and writes the
+ * skill or command body as the `isMeta` entry that follows. Built-in commands
+ * (`/clear`, `/model`, `/compact`, …) lead with `<command-name>` instead and
+ * have no body; they return "" here, so they never pull a following `isMeta`
+ * entry into their turn and always keep their raw, filtered input.
  */
-function slashCommandInput(text) {
-  if (typeof text !== "string" || !/^<command-(message|name)>/.test(text)) {
+function skillCommandInput(text) {
+  if (typeof text !== "string" || !/^<command-message>/.test(text)) {
     return "";
   }
   const name = /<command-name>([\s\S]*?)<\/command-name>/.exec(text);
@@ -565,38 +573,170 @@ function slashCommandInput(text) {
   return [name[1].trim(), args ? args[1].trim() : ""].filter(Boolean).join(" ");
 }
 
-/** The rendered input for a turn. Only skill-loading commands are unwrapped. */
+/**
+ * Is this a Claude Code background-task or subagent notification? Claude Code
+ * writes these as plain (non-isMeta) `type: "user"` entries whose content is a
+ * `<task-notification>…<summary>…</summary>…</task-notification>` block, and
+ * newer versions also tag them `origin: { kind: "task-notification" }`.
+ */
+function isTaskNotification(entry) {
+  if (entry.type !== "user" || isToolResultMessage(entry)) return false;
+  if (entry.origin && entry.origin.kind === "task-notification") return true;
+  return /^\s*<task-notification>/.test(
+    extractText((entry.message || {}).content),
+  );
+}
+
+/**
+ * Render a task notification that has to open its own turn as a one-line
+ * input. The full block (which can carry a subagent's whole report in
+ * `<result>`) goes to reasoning instead, so it is never read as user input.
+ */
+function taskNotificationInput(text) {
+  const summary = /<summary>([\s\S]*?)<\/summary>/.exec(text || "");
+  return `Task notification: ${summary ? summary[1].trim() : "background task update"}`;
+}
+
+/**
+ * Is this a subagent's hand-back report? Claude Code delivers it as an
+ * `isMeta` user entry tagged `origin: { kind: "peer", handback: true }`, with
+ * text starting "Another Claude session sent a message: <agent-message …>".
+ * Like a task notification, it is not user input and belongs to the open
+ * turn. Other peer messages (a request from an independent session, with no
+ * `handback`) are real input and still open their own turn.
+ */
+function isSubagentHandback(entry) {
+  if (entry.type !== "user" || isToolResultMessage(entry)) return false;
+  const origin = entry.origin;
+  return !!origin && origin.kind === "peer" && origin.handback === true;
+}
+
+/** Render a hand-back that has to open its own turn as a one-line input. */
+function handbackInput(entry) {
+  const origin = entry.origin || {};
+  const name = origin.name || origin.from || "";
+  return name ? `Agent message: ${name}` : "Agent message";
+}
+
+const SKILL_BODY_PATTERN = /^Base directory for this skill: *(\S+)/;
+
+/**
+ * Is this an `isMeta` entry Claude Code injected while loading a skill (the
+ * skill body, or a notice such as "Skill /commit was loaded earlier")? The
+ * model-invoked shape carries `sourceToolUseID`; a body from a typed `/skill`
+ * is recognized by its "Base directory for this skill:" first line.
+ */
+function isSkillContext(entry) {
+  if (entry.type !== "user" || entry.isMeta !== true) return false;
+  if (isToolResultMessage(entry)) return false;
+  if (entry.sourceToolUseID) return true;
+  return SKILL_BODY_PATTERN.test(extractText((entry.message || {}).content));
+}
+
+/** Context injected into a turn rather than typed by the user. */
+function isInjectedContext(entry) {
+  return isTaskNotification(entry) || isSubagentHandback(entry) || isSkillContext(entry);
+}
+
+/**
+ * Render skill context that has to open its own turn (see isTurnStart) as a
+ * one-line input naming the skill. The body goes to reasoning instead.
+ */
+function skillContextInput(text) {
+  const dir = SKILL_BODY_PATTERN.exec(text || "");
+  const name = dir ? path.basename(dir[1].replace(/\/+$/, "")) : "";
+  return name ? `Skill loaded: ${name}` : "Skill context loaded";
+}
+
+/**
+ * The rendered input for a turn. Skill-loading commands are unwrapped, and
+ * a turn opened by injected context gets a one-line summary so that context
+ * is never sent as user input.
+ */
 function turnInput(turn) {
   const text = extractText((turn.userMsg.message || {}).content);
-  return turn.injectedEntries.length > 0 ? slashCommandInput(text) || text : text;
+  if (isTaskNotification(turn.userMsg)) return taskNotificationInput(text);
+  if (isSubagentHandback(turn.userMsg)) return handbackInput(turn.userMsg);
+  if (isSkillContext(turn.userMsg)) return skillContextInput(text);
+  // Only a skill command that actually got its body is shown as `/name args`.
+  return turn.injectedEntries.some((e) => e.isMeta === true && !isSubagentHandback(e))
+    ? skillCommandInput(text) || text
+    : text;
+}
+
+/** Will a turn with this rendered input be captured? */
+function isCapturableInput(input) {
+  return !!input && !SKIP_INPUT_PATTERN.test(input);
 }
 
 /**
  * Does this user entry open a new turn? `prev` is the parsed entry just
  * before it, or null. `insideInjectedRun` is true while consecutive injected
  * `isMeta` entries continue after a skill-loading command or tool call.
+ * `openTurn` is the `{ userMsg, injectedEntries }` of the turn an earlier entry
+ * in this parse window opened, or null.
  *
  * Claude Code injects skill bodies ("Base directory for this skill: …") as
  * `type: "user"` entries with `isMeta: true`. They belong to the turn that
  * loaded the skill, not to a new one:
  *   - the model called the Skill tool → the entry carries `sourceToolUseID`;
- *   - the user typed `/skill` → the entry follows the `<command-name>` entry.
+ *   - the user typed `/skill` → the entry follows the `<command-message>`
+ *     entry (see skillCommandInput).
  * Other `isMeta` user entries (scheduled and /loop prompts, image captions,
- * messages from other sessions) still open a turn.
+ * requests from other sessions) still open a turn.
+ *
+ * Task notifications (see isTaskNotification) and subagent hand-backs (see
+ * isSubagentHandback) are not user input either, so they also stay in the
+ * open turn and the assistant's reaction joins it — unless that turn is never
+ * captured (a `/compact` or `<local-command-…>` turn), which would drop the
+ * reaction with it.
  */
-function isTurnStart(entry, prev, insideInjectedRun = false) {
+function isTurnStart(entry, { prev = null, insideInjectedRun = false, openTurn = null } = {}) {
   if (entry.type !== "user" || isToolResultMessage(entry)) return false;
+  // Nothing to fold into: the turn this entry belongs to was captured by an
+  // earlier drain (a notification arriving after the checkpoint), or a cursor
+  // persisted by an older capture version points straight at an injected
+  // entry. Anchor a turn here so the assistant reply that follows is kept.
+  if (!openTurn) return true;
+  if (isTaskNotification(entry) || isSubagentHandback(entry)) {
+    return !isCapturableInput(turnInput(openTurn));
+  }
   if (entry.isMeta !== true) return true;
-  // A persisted cursor from an older capture version can point directly at an
-  // injected entry. Keep that entry as an anchor so its assistant reply is not
-  // discarded when this parse window has no preceding command or tool call.
-  if (prev == null) return true;
   if (entry.sourceToolUseID) return false;
   if (insideInjectedRun) return false;
-  const prevIsSlashCommand =
+  const prevIsSkillCommand =
+    prev != null &&
     prev.type === "user" &&
-    slashCommandInput(extractText((prev.message || {}).content)) !== "";
-  return !prevIsSlashCommand;
+    skillCommandInput(extractText((prev.message || {}).content)) !== "";
+  return !prevIsSkillCommand;
+}
+
+/**
+ * Stateful wrapper over isTurnStart for a pass over parsed entries, so
+ * buildExchanges and realUserTurnLines apply the same turn-start rule.
+ * Returns `startsTurn(entry) → boolean`; call it once per entry, in order.
+ */
+function turnStartTracker() {
+  let prev = null;
+  let insideInjectedRun = false;
+  // Mirrors the turn buildExchanges is assembling, so turnInput can render it.
+  let openTurn = null;
+  return (entry) => {
+    const startsTurn = isTurnStart(entry, { prev, insideInjectedRun, openTurn });
+    const isUserText = entry.type === "user" && !isToolResultMessage(entry);
+    // A hand-back is isMeta too, but it never continues a skill's run.
+    const isMetaUser =
+      isUserText && entry.isMeta === true && !isSubagentHandback(entry);
+    insideInjectedRun =
+      isMetaUser && (entry.sourceToolUseID != null || !startsTurn);
+    if (startsTurn) {
+      openTurn = { userMsg: entry, injectedEntries: [] };
+    } else if (openTurn && isUserText) {
+      openTurn.injectedEntries.push(entry);
+    }
+    prev = entry;
+    return startsTurn;
+  };
 }
 
 // --- Turn-assembly exchange extraction ---
@@ -729,13 +869,62 @@ function parseTranscriptEntries(filePath, startLine) {
 }
 
 /**
+ * Render a turn's assistant side: assistant text becomes `output`; thinking,
+ * tool calls, tool results and injected entries become `reasoning`.
+ */
+function renderTurnBody(ex) {
+  const outputParts = [];
+  const reasoningParts = [];
+
+  for (const aEntry of ex.assistantEntries) {
+    const content = (aEntry.message || {}).content;
+    if (!Array.isArray(content)) continue;
+
+    const text = extractText(content);
+    if (text) outputParts.push(text);
+
+    const thinking = extractThinking(content);
+    if (thinking) reasoningParts.push("THINKING:\n" + thinking);
+
+    const toolCalls = extractToolCalls(content);
+    if (toolCalls) reasoningParts.push(toolCalls);
+  }
+
+  for (const trEntry of ex.toolResultEntries) {
+    const resultText = extractToolResultContent(trEntry);
+    if (resultText) reasoningParts.push(resultText);
+  }
+
+  const injected = isInjectedContext(ex.userMsg)
+    ? [ex.userMsg, ...ex.injectedEntries]
+    : ex.injectedEntries;
+  for (const injEntry of injected) {
+    const text = extractText((injEntry.message || {}).content);
+    if (text) {
+      const label = isTaskNotification(injEntry)
+        ? "TASK NOTIFICATION:\n"
+        : isSubagentHandback(injEntry)
+          ? "AGENT MESSAGE:\n"
+          : "INJECTED CONTEXT:\n";
+      reasoningParts.push(label + truncate(text, MAX_TOOL_RESULT_LEN));
+    }
+  }
+
+  return {
+    output: outputParts.join("\n\n"),
+    reasoning: reasoningParts.join("\n---\n"),
+  };
+}
+
+/**
  * Group parsed entries into exchanges using turn-assembly, then render each
  * exchange to the { input, output, reasoning } shape addMessage sends.
  *
  * A real user message (no toolUseResult) starts a new exchange. Skill bodies
- * and related injected `isMeta` entries stay in the turn that loaded them.
- * Other user messages start the next exchange. Assistant lines and tool-result
- * user lines belong to the current exchange.
+ * and related injected `isMeta` entries stay in the turn that loaded them, and
+ * task notifications stay in the open turn (see isTurnStart). Other user
+ * messages start the next exchange. Assistant lines and tool-result user lines
+ * belong to the current exchange.
  *
  * `items` is the `{ entry, line }` list from parseTranscriptEntries. Returns
  * `{ exchanges, pendingFromLine }`:
@@ -754,35 +943,24 @@ function parseTranscriptEntries(filePath, startLine) {
  *     complete trailing turn, which advances fully.
  */
 function buildExchanges(items) {
-  const skipPattern =
-    /^<(system-reminder|command-|local-command|available-deferred)/;
   const turns = [];
   let current = null;
 
-  let prev = null;
-  let insideInjectedRun = false;
+  const startsTurn = turnStartTracker();
   for (const { entry, line } of items) {
-    const startsTurn = isTurnStart(entry, prev, insideInjectedRun);
-    const isMetaUser =
-      entry.type === "user" &&
-      !isToolResultMessage(entry) &&
-      entry.isMeta === true;
-    insideInjectedRun =
-      isMetaUser && (entry.sourceToolUseID != null || !startsTurn);
-    prev = entry;
-    if (startsTurn) {
+    if (startsTurn(entry)) {
       if (current) turns.push(current);
       current = {
         userMsg: entry,
         userLine: line,
         assistantEntries: [],
         toolResultEntries: [],
-        // Skill bodies and other text Claude Code injects as isMeta user
-        // entries inside this turn (see isTurnStart).
+        // Skill bodies, other isMeta text and task notifications Claude Code
+        // writes as user entries inside this turn (see isTurnStart).
         injectedEntries: [],
-        // A skill turn is incomplete until an assistant entry arrives after
-        // its injected context. Assistant tool calls before the injection do
-        // not make the turn safe for a checkpoint to consume.
+        // A turn with injected context is incomplete until an assistant entry
+        // arrives after its latest injection. Assistant entries before that
+        // injection do not make the turn safe for a checkpoint to consume.
         assistantAfterInjection: false,
         // Codex streaming turns end at a completion boundary (phase:
         // final_answer, or a task_complete event_msg). `codexStreaming` marks a
@@ -810,6 +988,9 @@ function buildExchanges(items) {
         current.toolResultEntries.push(entry);
       } else if (entry.type === "user") {
         current.injectedEntries.push(entry);
+        // Each injection needs its own reply: a second skill body or
+        // notification re-opens the hold until an assistant entry follows it.
+        current.assistantAfterInjection = false;
       }
     }
   }
@@ -834,7 +1015,7 @@ function buildExchanges(items) {
     : false;
   if (last && lastIncomplete) {
     const lastInput = turnInput(last);
-    if (lastInput && !skipPattern.test(lastInput)) {
+    if (isCapturableInput(lastInput)) {
       pendingFromLine = last.userLine;
     }
   }
@@ -851,39 +1032,10 @@ function buildExchanges(items) {
     if (isPendingTrailing) continue;
 
     const input = turnInput(ex);
-    if (!input || skipPattern.test(input)) continue;
+    if (!isCapturableInput(input)) continue;
     if (ex.assistantEntries.length === 0) continue;
 
-    const outputParts = [];
-    const reasoningParts = [];
-
-    for (const aEntry of ex.assistantEntries) {
-      const content = (aEntry.message || {}).content;
-      if (!Array.isArray(content)) continue;
-
-      const text = extractText(content);
-      if (text) outputParts.push(text);
-
-      const thinking = extractThinking(content);
-      if (thinking) reasoningParts.push("THINKING:\n" + thinking);
-
-      const toolCalls = extractToolCalls(content);
-      if (toolCalls) reasoningParts.push(toolCalls);
-    }
-
-    for (const trEntry of ex.toolResultEntries) {
-      const resultText = extractToolResultContent(trEntry);
-      if (resultText) reasoningParts.push(resultText);
-    }
-
-    for (const injEntry of ex.injectedEntries) {
-      const text = extractText((injEntry.message || {}).content);
-      if (text) {
-        reasoningParts.push(
-          "INJECTED CONTEXT:\n" + truncate(text, MAX_TOOL_RESULT_LEN)
-        );
-      }
-    }
+    const { output, reasoning } = renderTurnBody(ex);
 
     results.push({
       user_uuid: ex.userMsg.uuid || "unknown",
@@ -895,8 +1047,8 @@ function buildExchanges(items) {
       next_line_number:
         t + 1 < turns.length ? turns[t + 1].userLine : null,
       input: input,
-      output: outputParts.join("\n\n"),
-      reasoning: reasoningParts.join("\n---\n"),
+      output,
+      reasoning,
       timestamp:
         ex.assistantEntries[ex.assistantEntries.length - 1].timestamp ||
         ex.userMsg.timestamp ||
@@ -1066,18 +1218,9 @@ function writeWatermark(wmPath, convId, lineNum, agentId, datapackPin = null, ag
 /** Real user-turn line indexes from a parseTranscriptEntries result (PR #262). */
 function realUserTurnLines(entries) {
   const lines = [];
-  let prev = null;
-  let insideInjectedRun = false;
+  const startsTurn = turnStartTracker();
   for (const { entry, line } of entries) {
-    const startsTurn = isTurnStart(entry, prev, insideInjectedRun);
-    if (startsTurn) lines.push(line);
-    const isMetaUser =
-      entry.type === "user" &&
-      !isToolResultMessage(entry) &&
-      entry.isMeta === true;
-    insideInjectedRun =
-      isMetaUser && (entry.sourceToolUseID != null || !startsTurn);
-    prev = entry;
+    if (startsTurn(entry)) lines.push(line);
   }
   return lines;
 }
@@ -2673,6 +2816,29 @@ function persistExchangeCheckpoint(sessionId, state, nextLine, extras) {
  */
 function buildInterruptedExchange(turn, sessionId) {
   const input = turnInput(turn) || "";
+  // A turn held only because injected context (a skill body or a task
+  // notification) never got its follow-up reply already has a real answer.
+  // Keep it rather than replacing it with the interrupted marker.
+  if (
+    turn.assistantEntries.length > 0 &&
+    !(turn.codexStreaming && !turn.codexComplete)
+  ) {
+    const { output, reasoning } = renderTurnBody(turn);
+    if (output) {
+      return {
+        user_uuid: turn.userMsg.uuid || "unknown",
+        user_line: turn.userLine,
+        next_line_number: null,
+        input,
+        output,
+        reasoning,
+        timestamp:
+          turn.assistantEntries[turn.assistantEntries.length - 1].timestamp ||
+          turn.userMsg.timestamp ||
+          "",
+      };
+    }
+  }
   return {
     user_uuid: turn.userMsg.uuid || "unknown",
     user_line: turn.userLine,
@@ -3625,6 +3791,7 @@ module.exports = {
   realUserTurnLines,
   INTERRUPTED_ASSISTANT_OUTPUT,
   buildExchanges,
+  buildInterruptedExchange,
   extractExchanges,
   addMessage,
   isMissingConversationError,

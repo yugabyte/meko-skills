@@ -163,6 +163,7 @@ The full transcript including:
 - **Assistant responses** — all text blocks (the `output` field)
 - **Tool calls** — tool name + input parameters (the `reasoning` field)
 - **Tool results** — output from tool executions (appended to `reasoning`)
+- **Injected context** — skill bodies, background-task notifications, and subagent reports that the client writes into the transcript (appended to `reasoning` of the turn they belong to, never used as `input`)
 
 This is more than just text — tool calls and results are critical context for session replay, cross-agent sharing, and compaction.
 
