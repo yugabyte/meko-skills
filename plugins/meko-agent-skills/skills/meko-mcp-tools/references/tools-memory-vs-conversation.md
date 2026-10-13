@@ -59,7 +59,7 @@ conversation_add_message(conversation_id="conv-uuid-here", agent_id="support_bot
 |--------|------|
 | "remember that...", "note that...", "keep in mind..." | `memory_add` |
 | "store this conversation", "save this chat" | `conversation_create` + `conversation_add_message` |
-| "what do you know about X?", "recall..." | `memory_search` |
+| "what do you know about X?", "recall..." | `context_search` |
 | "show me our past conversation about..." | `conversation_list` + `conversation_get` |
 | "the user prefers...", "their budget is..." | `memory_add` |
 | "save my query and your response" | `conversation_add_message` |
@@ -107,7 +107,7 @@ Agents on Cloud Meko have two distinct read surfaces. Pick the right one for the
 
 ### When the user asks "what do you know about X?"
 
-A full sweep is two calls: `memory_search` (all your personal memories, every agent — no per-agent fan-out) then `knowledgebase_search` (team-shared knowledge). When you answer, name which surface each finding came from, so the user knows why something is or isn't there.
+Call `context_search`. One call returns your personal memories (every agent, no per-agent fan-out), team-shared knowledge, and matching past-conversation turns from anyone on the datapack. If the memory or KB bucket is empty, confirm with `memory_search` or `knowledgebase_search` before saying nothing is there, because `context_search` returns an empty list for a failed source. When you answer, name which surface each finding came from, so the user knows why something is or isn't there.
 
 ## Memory limitations for structured data
 
@@ -130,7 +130,7 @@ On Claude Code, do **not** proactively `memory_add` facts the user states — ca
 
 ## Automatic Conversation Capture
 
-The plugin captures conversations via three mechanisms — a periodic checkpoint (~10 min), a PreCompact hook, and a SessionEnd hook — storing the full transcript verbatim (user prompts as `input`, assistant text as `output`, tool calls and results as `reasoning`).
+The plugin captures conversations via three mechanisms — a periodic checkpoint (~10 min), a PreCompact hook, and a SessionEnd hook — storing the full transcript verbatim (user prompts as `input`, assistant text as `output`, tool calls and results as `reasoning`). Skill bodies, background-task notifications, and subagent reports that Claude Code writes into the transcript go to `reasoning` of the turn they belong to, never to `input`. A typed `/skill args` is captured with that command as its `input`.
 
 Each message's seed is `<conversation_id>:<user_message_uuid>`; all three mechanisms derive the same deterministic trace ID from it, so overlapping captures are idempotent. A shared watermark file tracks what has been saved.
 

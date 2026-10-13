@@ -25,6 +25,10 @@ const {
   writeHealthCache,
 } = require("./capture-state");
 
+// blocked_reason prefix written by `--capture-cleanup stop`
+// (capture-cleanup-cli.js RESUME_HINT).
+const PARKED_REASON_PREFIX = "parked by capture cleanup";
+
 const NON_HEALTHY = new Set([
   "catching_up",
   "degraded_retrying",
@@ -133,6 +137,33 @@ function dropSentence(dropped, previouslyNotified, health) {
 }
 
 /**
+ * True when some session is still retrying. A session parked by
+ * `--capture-cleanup stop` is blocked on purpose and never retries, so it
+ * doesn't count; its blocked reason already says how to resume it.
+ */
+function retriesRunning(health) {
+  // A degraded session with nothing left to send (leftover failure fields on
+  // a delivered session) isn't retrying; `repair` clears it, not `stop`.
+  const sessions = Array.isArray(health && health.sessions) ? health.sessions : [];
+  const retrying = sessions.some(
+    (s) =>
+      s &&
+      s.status === "degraded_retrying" &&
+      (Number(s.queued_exchanges || 0) > 0 ||
+        ["needs_conversation", "pending", "draining", "retry_wait"].includes(s.delivery)),
+  );
+  if (retrying) return true;
+  if (health.status !== "blocked_action_required") return false;
+  const reasons = Array.isArray(health.blocked_reasons)
+    ? health.blocked_reasons.filter(Boolean)
+    : [];
+  return (
+    reasons.length === 0 ||
+    reasons.some((r) => !String(r).startsWith(PARKED_REASON_PREFIX))
+  );
+}
+
+/**
  * Build a SessionStart-injectable health notice.
  *
  * - When status ≠ healthy: always emit (exact affected-session + queued counts + reason).
@@ -204,10 +235,15 @@ function buildHealthNotice({ health, previousStatus, previousDropped } = {}) {
         ? "degraded_retrying"
         : "catching_up";
 
+  const cleanupHint = retriesRunning(h)
+    ? " If the user wants the retries to stop, offer " +
+      "`npx @yugabytedb/meko-mcp@latest --capture-cleanup stop`; it parks " +
+      "the backlog without deleting it."
+    : "";
   const notice = join(
     `[Meko capture] Status: ${label} — ${affected} session(s) affected, ` +
       `${queued} exchange(s) queued. Reason: ${reason}. ` +
-      `Run \`meko-mcp --capture-status\` for details.`,
+      `Run \`meko-mcp --capture-status\` for details.${cleanupHint}`,
     drops,
   );
 
@@ -338,6 +374,11 @@ function formatCaptureStatusText(health) {
   if (dropReasons.length) {
     lines.push(`  drop reasons: ${dropReasons.join("; ")}`);
   }
+  if (status === "degraded_retrying" || status === "blocked_action_required") {
+    lines.push(
+      "  per-session detail and cleanup: meko-mcp --capture-cleanup status",
+    );
+  }
   return lines.join("\n");
 }
 
@@ -384,6 +425,7 @@ function captureStatusJson(health) {
 }
 
 module.exports = {
+  PARKED_REASON_PREFIX,
   affectedSessionCount,
   reasonForHealth,
   statuslineSuffixFromHealth,

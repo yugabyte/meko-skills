@@ -37,6 +37,8 @@ const {
   writeHealthCache,
   importLegacyCaptureErrors,
   legacyErrorsSafeToRemove,
+  isResumableState,
+  readState,
 } = require("./capture-state");
 
 const INTERVAL_SECS = Math.max(1, checkpointInterval());
@@ -186,6 +188,20 @@ function runCaptureChild(mode, payload, timeoutMs) {
   });
 }
 
+// MEKO-635: settle OpenCode pending turns past the 30-minute default.
+function sweepOpenCodeSettles() {
+  try {
+    const opencode = require("./opencode-handler");
+    if (typeof opencode.sweepExpiredSettles === "function") {
+      opencode.sweepExpiredSettles();
+    }
+  } catch (err) {
+    process.stderr.write(
+      `[meko-timer] OpenCode settle sweep failed: ${err.message}\n`,
+    );
+  }
+}
+
 function rebuildHealth() {
   try {
     const scan = scanStates({ includeBlocked: true });
@@ -253,6 +269,10 @@ async function runRecoveryCycle() {
   const forcePersistentRetry = startupRecoveryPending;
   let moreWork = false;
   try {
+    // Finalize any resumable session whose settling window has expired before
+    // the scan snapshots eligibility. Otherwise recovery keeps draining a
+    // pending user (queued_exchanges === 1) whose assistant will never arrive.
+    sweepOpenCodeSettles();
     const scan = scanStates({
       includeBlocked: true,
       forcePersistentRetry,
@@ -295,11 +315,12 @@ async function runRecoveryCycle() {
       }
 
       const state = entry.state || {};
+      const resumable = isResumableState(state);
       const payload = {
         session_id: entry.session_id,
         transcript_path: state.transcript_path || undefined,
-        lifecycle: state.lifecycle === "closing" ? "closing" : "closing",
-        confirmed_dead: true,
+        lifecycle: resumable ? "active" : "closing",
+        confirmed_dead: !resumable,
         recorded_owner_only: true,
         max_exchanges: Math.min(budget, maxCaptureBatchSize()),
         force_retry: Boolean(
@@ -324,7 +345,10 @@ async function runRecoveryCycle() {
       const captured = Number((result && result.captured) || 0);
       budget -= captured;
       const queued = Number((result && result.queued_remaining) || 0);
-      if (queued > 0 || (result && result.status === "retry_wait")) {
+      if (
+        (queued > 0 || (result && result.status === "retry_wait")) &&
+        !(resumable && captured === 0 && queued <= 1 && result.status !== "retry_wait")
+      ) {
         moreWork = true;
       }
       if (result && (result.status === "partial" || result.status === "retry_wait" || result.status === "blocked")) {
@@ -349,7 +373,10 @@ async function runRecoveryCycle() {
           e.eligibility &&
           e.session_id !== sessionId &&
           Number(e.eligibility.queued_exchanges || 0) > 0 &&
-          e.eligibility.retry_due === false,
+          e.eligibility.retry_due === false &&
+          !(isResumableState(e.state) &&
+            Number(e.eligibility.queued_exchanges || 0) <= 1 &&
+            e.state && e.state.delivery === "pending"),
       );
     }
 
@@ -362,6 +389,14 @@ async function runRecoveryCycle() {
   }
   workRemains = moreWork;
   return moreWork;
+}
+
+// MEKO-635: for the daemon's own session, look up whether its captured intent
+// declared a resumable pending-turn policy. If so, timer-idle and
+// transcript-gone paths must drain without finalizing the session as dead.
+function selfIsResumable() {
+  const read = readState(sessionId);
+  return read.ok ? isResumableState(read.state) : false;
 }
 
 async function tick() {
@@ -385,14 +420,16 @@ async function tick() {
         await runRecoveryCycle();
         return;
       }
-      // Transcript gone after grace — run one closing recovery for self, then exit.
+      // Transcript gone after grace. For a resumable session drain without
+      // finalizing so a later snapshot can complete its pending turn.
+      const resumable = selfIsResumable();
       await runCaptureChild(
         "drain",
         {
           session_id: sessionId,
           transcript_path: transcriptPath,
-          lifecycle: "closing",
-          confirmed_dead: true,
+          lifecycle: resumable ? "active" : "closing",
+          confirmed_dead: !resumable,
           recorded_owner_only: true,
         },
         CAPTURE_TIMEOUT_MS,
@@ -406,13 +443,14 @@ async function tick() {
       process.stderr.write(
         `[meko-timer] Transcript idle > ${IDLE_EXIT_SECS}s; final drain then exit.\n`,
       );
+      const resumable = selfIsResumable();
       await runCaptureChild(
         "drain",
         {
           session_id: sessionId,
           transcript_path: transcriptPath,
-          lifecycle: "closing",
-          confirmed_dead: true,
+          lifecycle: resumable ? "active" : "closing",
+          confirmed_dead: !resumable,
           recorded_owner_only: true,
         },
         CAPTURE_TIMEOUT_MS,

@@ -11,7 +11,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.1.2"
+  version: "1.1.3"
   tags: meko, datapack, selection, project, claude-code
 ---
 <!--
@@ -84,9 +84,9 @@ The deployed Meko server returns an array of objects. The fields the skill uses:
 - `datapack_name` — human-readable name.
 - `created_at` — ISO timestamp.
 - `grant` — role string (`"owner"`, etc.) — the actual authorization field. Display this verbatim in the Role column. Do not invent or normalize it.
-- Count fields (`memory_count`, `knowledge_count`, `learnings_count`, `collective_memory_count`) — the list handler on Meko doesn't compute any of them (they'd need per-datapack queries; only `Describe` runs those). All four arrive as stale zeros; the MCP client strips them from the list response so callers aren't misled. Use `datapack_describe(datapack_id=...)` when you need real counts for a specific datapack.
+- Count fields (`memory_count`, `knowledge_count`, `learnings_count`, `collective_memory_count`) — the list handler on Meko doesn't compute any of them (they'd need per-datapack queries; only `Describe` runs those). All four arrive as stale zeros; the MCP client strips them from the list response so callers aren't misled. Use `datapack_describe(datapack_id=..., conversation_id="<conversation id>")` when you need real counts for a specific datapack.
 
-If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>')` to make one, or visit the Meko Cloud console."* Stop.
+If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>', conversation_id='<conversation id>')` to make one, or visit the Meko Cloud console."* Stop.
 
 If the response has exactly **one** entry, **auto-select it**. Print: *"Only one datapack: `<name>`. Auto-selecting. Run the skill again with `clear` to unset."* Skip the table; jump straight to step 4 (persist) and step 5 (confirm).
 
@@ -198,7 +198,7 @@ The active-datapack block won't appear in the **current** turn's `additionalCont
 - **Network failure on `datapack_list`** — surface the error verbatim ("Couldn't reach Meko: <err>"). Don't silently fall back to the default datapack — the user asked to see the list.
 - **Pin file write fails** — surface the error and tell the user the pin did NOT take effect. Do not claim success on a failed write.
 - **Ambiguous substring** — never auto-pick. Re-render the filtered subset with new numbers and re-prompt.
-- **Stale pin (the pinned datapack no longer exists)** — when the hook re-injects, the block is just text; a Meko call with the stale `datapack_id` will fail with a server error. Tell the user: *"That pin is stale. Run `meko-select-datapack` to pick a fresh one or `clear` to unset."* Don't silently swallow it.
+- **Stale pin (the pinned datapack no longer exists)** — when the hook re-injects, the block is just text; a Meko call with the stale `datapack_id` fails with `datapack_access_denied`. Tell the user: *"That pin is stale. Run `meko-select-datapack` to pick a fresh one or `clear` to unset."* Don't silently swallow it.
 - **No `agent_id` in the SessionStart block** — the hook didn't run successfully. Don't compute a slug from cwd or guess; tell the user the hook is broken and the skill can't pin until it's fixed.
 
 ## Critical: do NOT modify the watermark
