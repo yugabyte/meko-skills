@@ -28,7 +28,8 @@ Datapacks are isolated workspaces — each has its own memory store and knowledg
 ## How to obtain a datapack_id
 
 - From `datapack_create` response (`"datapack_id"` field; `"datapack_name"` is also returned)
-- From `datapack_list` (each entry has `"datapack_id"` and `"datapack_name"`)
+- From `datapack_search(query="<part of the name>")` or `datapack_search(name="<exact name>")`: each row in `"datapacks"` has `"datapack_id"` and `"datapack_name"`. Page with `cursor="<next_cursor>"` only when that value is non-empty. An empty `next_cursor` means stop and narrow with `query`.
+- From `datapack_list` on a small account, or on an older server without `datapack_search` (each entry has `"datapack_id"` and `"datapack_name"`). An account that can see more than 1000 datapacks (the server default limit) gets `too_many_datapacks` from an unfiltered `datapack_list`; use `datapack_search`.
 - From `datapack_describe` response (same field names)
 
 ## Datapack lifecycle

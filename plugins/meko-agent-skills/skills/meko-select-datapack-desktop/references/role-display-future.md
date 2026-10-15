@@ -16,7 +16,7 @@ specific language governing permissions and limitations under the License.
 
 ## Today: render `grant` verbatim
 
-The deployed Meko `GET /datapacks` response includes a `grant` field on every datapack. Possible values (per maintainer guidance, 2026-05-26):
+The deployed Meko `GET /datapacks` response includes a `grant` field on every datapack, and so does every row that `datapack_search` and `datapack_list` return. Possible values (per maintainer guidance, 2026-05-26):
 
 - `"owner"` — datapacks the caller created.
 - `"maintainer"` — write access to a shared datapack including memories AND collective learnings/knowledge.
@@ -36,9 +36,9 @@ Do not invent values, do not normalize the casing, do not display `"Owner"` if t
 
 Note that the upstream Go source (the `Datapack` struct in `api_server/internal/models/models.go` of the `meko` API-server repo) does NOT declare `grant` — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
-## Other fields the live response includes
+## Counts are not on the list response
 
-`datapack_list` doesn't compute counts; its list response carries no count fields. If the user asks for counts, call `datapack_describe(datapack_id=<id>, conversation_id="<conversation id>")` and read them from that response:
+Neither `datapack_search` nor `datapack_list` computes counts; their rows carry no count fields. If the user asks for counts, call `datapack_describe(datapack_id=<id>, conversation_id="<conversation id>")` and read them from that response:
 
 - `memory_count`: all memories stored in the datapack.
 - `collective_memory_count`: memories promoted to shared knowledge.

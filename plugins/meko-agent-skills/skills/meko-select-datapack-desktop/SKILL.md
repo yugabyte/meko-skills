@@ -11,7 +11,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.2.2"
+  version: "1.3.0"
   tags: meko, datapack, selection, project, claude-desktop, desktop
 ---
 <!--
@@ -77,7 +77,7 @@ This is once per turn, not once per call. Cache within the turn.
 Use a **temporary** conversation for browsing only. Call
 `conversation_create(agent_id="claude_desktop", title="Claude
 Desktop datapack selection")` and use its returned ID for the read-only
-`datapack_list` below and for the pin `memory_add`/`memory_update` in step 4.
+datapack calls below and for the pin `memory_add`/`memory_update` in step 4.
 
 **Do not reuse this conversation for later capture.** It lives in whatever
 datapack was active when it was created (typically the default), and a
@@ -85,12 +85,28 @@ conversation cannot move between datapacks. Once a datapack is pinned, capture
 must flow through a *new* conversation created in the selected datapack — see
 step 5.
 
+Check your tool list. If it has `datapack_search`, use it as below. If it
+doesn't (an older Meko server), use the fallback section at the end of step 3.
+
 ```
-datapack_list(conversation_id="<this conversation's id>")
+datapack_search(conversation_id="<this conversation's id>", limit=10, include_total=true)
 ```
 
-The response is an array; the fields you'll use are `datapack_id`,
-`datapack_name`, `created_at`, `account_id`, and `grant`.
+The server sorts, filters and pages, so this works the same for 3 datapacks or
+1,000,000. The response is one page:
+
+```
+{"datapacks": [...], "has_more": true, "next_cursor": "<opaque token>", "total": 14}
+```
+
+- `datapacks`: up to `limit` rows, newest first (`created_at DESC`). The
+  fields you'll use are `datapack_id`, `datapack_name`, `created_at`, and
+  `grant`.
+- `has_more`: `true` when another page exists.
+- `next_cursor`: pass it as `cursor` to get the next page. It is `""` on the
+  last page. Treat it as opaque: never build or edit one.
+- `total`: how many datapacks match, present because you passed
+  `include_total=true`.
 
 `grant` is the caller's actual authorization on the datapack — one of
 `"owner"`, `"maintainer"`, `"contributor"`, `"viewer"`. Display it verbatim in
@@ -99,13 +115,22 @@ the Role column. Do not hardcode "Owner", do not invent or normalize the value
 response is the source of truth — see `references/role-display-future.md` for
 the taxonomy.
 
-If the response has zero entries, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>', conversation_id='<conversation id>')` to make one, or visit the Meko Cloud console."* Stop here.
+If `total` is 0, tell the user: *"You don't have any datapacks yet. Run `datapack_create(name='<name>', conversation_id='<conversation id>')` to make one, or visit the Meko Cloud console."* Stop here.
 
-If the response has exactly **one** entry, **auto-select it**. Print: *"Only one datapack: `<name>`. Auto-selecting. Run `meko-select-datapack-desktop` again with `clear` to unset."* Skip the table; jump to step 4 (persist) and step 5 (confirm).
+If `total` is exactly **1**, **auto-select it**. Print: *"Only one datapack: `<name>`. Auto-selecting. Run `meko-select-datapack-desktop` again with `clear` to unset."* Skip the table; jump to step 4 (persist) and step 5 (confirm).
+
+If `total` is missing or `null`, decide from the page instead: no rows and
+`has_more` false means zero datapacks; one row and `has_more` false means
+exactly one. Drop `of <total>` from the header in step 2.
+
+**Keep the paging state in the conversation.** Remember the current filter
+(none yet), the `total`, the page number, the `next_cursor`, and a list of the
+cursors you used for each page so far (page 1 used no cursor). `next` and
+`prev` in step 3 need them.
 
 ### 2. Render the table
 
-For 2+ datapacks, render a numbered table. **Page size 10.** Default sort: `created_at DESC` (newest first).
+For 2+ datapacks, render a numbered table of the current page. **Page size 10.** Row order is the server's (`created_at DESC`, newest first). Number rows by position in the whole list: page 1 shows 1-10, page 2 shows 11-20. The count line is `Your datapacks (showing <first>-<last> of <total>):`, for example:
 
 ```
 Your datapacks (showing 1-10 of 14):
@@ -126,16 +151,70 @@ The **Role** column shows each datapack's `grant` value verbatim (`owner`,
 datapacks legitimately carry other grants, and misreporting them (e.g. showing
 a `maintainer` grant as "Owner") misleads the user about their own access.
 
-Mark the currently-pinned row with `←  (pinned)` based on the `memory_search` result (if any).
+Mark the currently-pinned row with `←  (pinned)` based on the `memory_search` result (if any). If the pinned datapack is not on the current page, name it in one line above the table.
+
+In the legend, the number range is the rows on the current page (`11-20` on
+page 2). Offer `next` only when `has_more` is true and `next_cursor` is
+non-empty. An empty `next_cursor` with `has_more` still true means this
+server cannot page further: tell the user to narrow with a substring, and
+do not send an empty cursor. Offer `prev` only after page 1.
+
+For a search (step 3), the count line is
+`Datapacks matching "<text>" (showing <first>-<last> of <total>):`, numbered
+from 1.
 
 ### 3. Parse the user's reply
 
-- **Integer in range** → that row is the choice.
-- **Substring** → re-render filtered. If it narrows to one row, that's the choice.
-- **`next` / `prev`** → re-render next/previous page.
+- **Integer shown on the current page** → that row is the choice.
+- **Substring** → search on the server; do not filter the rows you already have:
+  ```
+  datapack_search(conversation_id="<this conversation's id>", query="<text>", limit=10, include_total=true)
+  ```
+  This starts a new listing: reset the page number and the cursor list, and
+  keep `<text>` as the filter so `next` / `prev` page through the matches. If
+  `total` is 0, say *"No datapacks match `<text>`."* and re-prompt with the
+  legend. If `total` is exactly 1, that's the choice. Otherwise render the
+  matches with the search count line from step 2.
+- **`next`** → if `has_more` is false, say this is the last page and
+  re-prompt. If `next_cursor` is empty, say this server cannot page further
+  and ask for a substring; do not send an empty cursor. Otherwise call
+  `datapack_search` with the same `query` (if any), `limit=10` and
+  `cursor="<next_cursor>"`, add that cursor to your list, and render the new
+  page. Reuse the `total` you already have.
+- **`prev`** → on page 1, say this is the first page and re-prompt. Otherwise
+  drop the last cursor from your list and call `datapack_search` again with
+  the same `query` and the cursor now at the end of the list (no cursor for
+  page 1).
 - **`cancel`** → leave any existing pin in place; print *"Cancelled. Active datapack unchanged."* Stop.
 - **`clear` / `none` / `unpin`** → see step 4's clear path.
 - **Unrecognized** → re-prompt with the legend.
+
+If a call with a `cursor` returns an error, the cursor is no longer usable.
+Tell the user, then start again from the first page of the same filter.
+
+When the user names a datapack in the request itself ("pin prod-research"),
+skip the first listing and go straight to the substring search with that name.
+
+### Fallback: servers without `datapack_search`
+
+An older Meko server has only `datapack_list`. Run the same steps with these
+changes:
+
+```
+datapack_list(conversation_id="<this conversation's id>")
+```
+
+- The response is one array of every datapack, with the same row fields.
+  `total` is the array length.
+- Sort it `created_at DESC` yourself, show 10 rows per page, and page
+  `next` / `prev` over the array you already have.
+- Filter substrings client-side on `datapack_name` (case-insensitive) and
+  re-render the matching rows numbered from 1. If the filter narrows to one
+  row, that's the choice.
+
+If `datapack_list` returns `{"error": "too_many_datapacks", ...}`, the server
+does have `datapack_search`; your tool list is stale. Reload the Meko tools and
+use the main flow.
 
 ### 4. Persist
 

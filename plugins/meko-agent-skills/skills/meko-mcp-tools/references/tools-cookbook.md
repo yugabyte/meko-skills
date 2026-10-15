@@ -194,7 +194,7 @@ Get exact UUIDs from the `id` field of `memory_search` / `memory_get_all` result
 ```
 conversation_create(agent_id="agent",
     title="Debugging the auth middleware",
-    datapack_id="<uuid from datapack_list>")
+    datapack_id="<uuid from datapack_search>")
 ```
 
 `datapack_id` is required whenever no server-side default resolves for the caller. Omitting it in that state returns `{"error": "datapack_id_required"}` and persists nothing; the same contract applies to `conversation_add_message`, `conversation_get`, `conversation_update`, and `conversation_delete`.
@@ -239,8 +239,8 @@ conversation_get(conversation_id="conv-uuid-123", agent_id="agent",
 ### conversation_list
 
 Target the datapack by `datapack_id` (UUID). It's optional — omit it to use the
-pinned/default datapack, or pass the pinned `datapack_id`. Use `datapack_list`
-to look up the id.
+pinned/default datapack, or pass the pinned `datapack_id`. Use
+`datapack_search(query="<part of the name>")` to look up the id.
 
 ```
 conversation_list(datapack_id="<datapack-uuid>", agent_id="agent", limit=20)
@@ -392,13 +392,29 @@ For large files use the `local_path` value to read the file with normal file too
 
 ## Datapack Management Tools
 
-### datapack_create / datapack_list / datapack_describe
+### datapack_create / datapack_search / datapack_list / datapack_describe
 
 ```
 datapack_create(name="analytics_prod", conversation_id="<conversation id>")
-datapack_list(conversation_id="<session conversation id>")  # returns datapack_id for each datapack
+datapack_search(conversation_id="<session conversation id>", query="analytics")    # find an id by part of the name
+datapack_search(conversation_id="<session conversation id>", name="analytics_prod") # exact name
+datapack_list(conversation_id="<session conversation id>")  # small accounts: every datapack in one array
 datapack_describe(datapack_id="<uuid>", include_status=True, conversation_id="<conversation id>")
 ```
+
+Find a datapack id with `datapack_search(query=...)`. It returns one page:
+`{"datapacks": [...], "has_more": true, "next_cursor": "<token>", "total": null}`.
+To get the next page, call it again with the same filters and
+`cursor="<next_cursor>"`. `next_cursor` is `""` on the last page, and also
+when an older server has more matches than this page but cannot continue.
+Do not send an empty cursor; ask for a narrower `query` instead. Treat the
+cursor as opaque. Pass `include_total=True` only when you must show "N of M".
+
+`datapack_list` still returns one array and is fine for an account with a
+handful of datapacks. For an account that can see more than 1000 datapacks
+(the server default limit) it returns `{"error": "too_many_datapacks", ...}`
+instead; switch to `datapack_search`. If the server has no `datapack_search`
+tool (an older server), use `datapack_list`.
 
 `datapack_describe` returns these counts:
 
@@ -411,7 +427,7 @@ datapack_describe(datapack_id="<uuid>", include_status=True, conversation_id="<c
 | `knowledge_chunk_count` | KB chunks across all documents (for debugging retrieval) |
 | `shared_knowledge_count` | `collective_memory_count + knowledge_base_file_count`; `null` when the file count is `null` |
 
-`knowledge_count` is a deprecated alias of `knowledge_chunk_count`. `datapack_list` doesn't compute counts; call `datapack_describe` for them.
+`knowledge_count` is a deprecated alias of `knowledge_chunk_count`. Neither `datapack_search` nor `datapack_list` computes counts; call `datapack_describe` for them.
 
 ### datapack_update / datapack_delete
 

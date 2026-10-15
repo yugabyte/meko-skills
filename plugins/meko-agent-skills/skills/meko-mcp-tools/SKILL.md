@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.2.0"
+  version: "3.3.0"
   tags: mcp, tools, datapack, memory, conversation, rag, meko
 ---
 <!--
@@ -24,7 +24,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide
 
-Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 25 MCP tools available in production.
+Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 26 MCP tools available in production.
 
 **Read this first.** On Claude Code, conversation capture is automatic (SessionStart / PreCompact / SessionEnd hooks) and the Meko server extracts durable memories from the captured turns on its own. Facts the user states in conversation are saved for you — you do **not** proactively call `memory_add` for them. Your active jobs are: **recall** what's already known (`context_search` first, then `memory_search` or `knowledgebase_search` for a single source), and the **few** save cases automatic extraction cannot reach. Details below.
 
@@ -297,7 +297,7 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 25 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 26 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-datapack-workflow.md` | Datapack lifecycle and datapack_id routing |

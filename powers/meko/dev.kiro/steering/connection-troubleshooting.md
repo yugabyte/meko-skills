@@ -46,8 +46,9 @@ Don't retry the call until they have.
 ## `datapack_id_required`
 
 No default datapack resolved for the user. If you already have a
-`conversation_id`, call `datapack_list` with it; otherwise ask the user for the
-datapack ID from cloud.mekodata.ai. Pass that `datapack_id` on every later call.
+`conversation_id`, call `datapack_search` with it (with `query=` if the user
+named the datapack); on an older server without that tool, call `datapack_list`.
+Otherwise ask the user for the datapack ID from cloud.mekodata.ai. Pass that `datapack_id` on every later call.
 
 ## `free_tier_limit_reached`
 

@@ -50,8 +50,8 @@ for the rest of it.
    call `memory_add` for facts the user states: capture stores them. Skip step 3.
 3. **Create a conversation.** Call `conversation_create` with the `agent_id`
    and a short `title`. Pass the returned `id` as `conversation_id` on every
-   later call, including `datapack_list`, which rejects calls without one. If
-   `conversation_create` returns `datapack_id_required`, the user has no
+   later call, including `datapack_search` and `datapack_list`, which reject
+   calls without one. If `conversation_create` returns `datapack_id_required`, the user has no
    default datapack: ask which datapack to use (they can copy its ID from
    cloud.mekodata.ai), then pass that `datapack_id` to `conversation_create` and
    every later call.

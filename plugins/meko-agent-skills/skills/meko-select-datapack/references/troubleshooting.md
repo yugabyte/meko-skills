@@ -74,7 +74,7 @@ Never auto-pick when there's ambiguity. Re-render just the matching rows numbere
 Reply with a number, a more specific substring, or `cancel`.
 ```
 
-## Symptom: `datapack_list` returns an empty array
+## Symptom: The account has no datapacks (`total` is 0, or `datapack_list` returns an empty array)
 
 The user has zero datapacks under their account. The skill's response:
 
@@ -87,6 +87,18 @@ Or visit the Meko Cloud console (Datapacks → New datapack).
 ```
 
 Stop. Don't write a pin file.
+
+## Symptom: `next` or `prev` returns an error about the cursor
+
+The cursor is tied to the search it came from. It stops working if you change `query`, `sort` or `grant` while paging, or if you edit it. Always send the cursor back unchanged, with the same filters as the call that returned it. Tell the user the page could not be loaded and start again from page 1 of the same search (no cursor).
+
+## Symptom: `datapack_list` returns `too_many_datapacks`
+
+The account can see more datapacks than `datapack_list` returns in one array (1000 by default). The server that sends this error also has `datapack_search`. Use the main flow with `datapack_search`; if it is missing from your tool list, the list is stale, so reload the Meko tools.
+
+## Symptom: The tool list has no `datapack_search`
+
+The Meko server is older than that tool. Use the skill's fallback flow with `datapack_list`: one call, then sort, page and filter the array in the conversation. On an older server, this call can fail for an account with a very large number of datapacks; that account needs a server that has `datapack_search`.
 
 ## Symptom: User typed `cancel` after the table rendered
 

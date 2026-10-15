@@ -173,7 +173,7 @@ See the [extension README](./extensions/bmad/README.md#install) for the install 
 If you connected the MCP server manually and copied only the skills, your agent won't have session hooks injecting context automatically. Here's the bootstrap sequence:
 
 1. **Pick your `agent_id`**: Use `<client>:<project-name>` for project-scoped work (for example, `cursor:my-app` or `kiro:my-app`), or `claude_desktop` for desktop. Use `meko_agent` for cross-project facts.
-2. **Choose the datapack before capture starts**: If the account has multiple datapacks, use the matching selector skill where supported, or call `datapack_list` and choose explicitly. A conversation cannot move between datapacks after creation.
+2. **Choose the datapack before capture starts**: If the account has multiple datapacks, use the matching selector skill where supported, or find one with `datapack_search(query=...)` (`datapack_list` on servers without it) and choose explicitly. A conversation cannot move between datapacks after creation.
 3. **Create a conversation first**: Call `conversation_create(agent_id="<your agent_id>", datapack_id="<optional pinned UUID>")` to get a `conversation_id`. Reuse that UUID for calls in the session.
 4. **Recall prior context**: Call `memory_search(query="user preferences", agent_id="<your agent_id>", conversation_id="<your conversation_id>")`. One search returns that user's memories across agent IDs; `agent_id` attributes the trace rather than filtering memory results.
 5. **Search shared knowledge when relevant**: Call `knowledgebase_search` with the active `datapack_id`; it searches uploaded documents and promoted memories visible to the team.
