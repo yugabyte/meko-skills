@@ -154,7 +154,10 @@ a `maintainer` grant as "Owner") misleads the user about their own access.
 Mark the currently-pinned row with `←  (pinned)` based on the `memory_search` result (if any). If the pinned datapack is not on the current page, name it in one line above the table.
 
 In the legend, the number range is the rows on the current page (`11-20` on
-page 2). Offer `next` only when `has_more` is true and `prev` only after page 1.
+page 2). Offer `next` only when `has_more` is true and `next_cursor` is
+non-empty. An empty `next_cursor` with `has_more` still true means this
+server cannot page further: tell the user to narrow with a substring, and
+do not send an empty cursor. Offer `prev` only after page 1.
 
 For a search (step 3), the count line is
 `Datapacks matching "<text>" (showing <first>-<last> of <total>):`, numbered
@@ -173,9 +176,11 @@ from 1.
   legend. If `total` is exactly 1, that's the choice. Otherwise render the
   matches with the search count line from step 2.
 - **`next`** → if `has_more` is false, say this is the last page and
-  re-prompt. Otherwise call `datapack_search` with the same `query` (if any),
-  `limit=10` and `cursor="<next_cursor>"`, add that cursor to your list, and
-  render the new page. Reuse the `total` you already have.
+  re-prompt. If `next_cursor` is empty, say this server cannot page further
+  and ask for a substring; do not send an empty cursor. Otherwise call
+  `datapack_search` with the same `query` (if any), `limit=10` and
+  `cursor="<next_cursor>"`, add that cursor to your list, and render the new
+  page. Reuse the `total` you already have.
 - **`prev`** → on page 1, say this is the first page and re-prompt. Otherwise
   drop the last cursor from your list and call `datapack_search` again with
   the same `query` and the cursor now at the end of the list (no cursor for

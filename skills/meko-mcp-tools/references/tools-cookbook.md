@@ -405,7 +405,9 @@ datapack_describe(datapack_id="<uuid>", include_status=True, conversation_id="<c
 Find a datapack id with `datapack_search(query=...)`. It returns one page:
 `{"datapacks": [...], "has_more": true, "next_cursor": "<token>", "total": null}`.
 To get the next page, call it again with the same filters and
-`cursor="<next_cursor>"`. `next_cursor` is `""` on the last page. Treat the
+`cursor="<next_cursor>"`. `next_cursor` is `""` on the last page, and also
+when an older server has more matches than this page but cannot continue.
+Do not send an empty cursor; ask for a narrower `query` instead. Treat the
 cursor as opaque. Pass `include_total=True` only when you must show "N of M".
 
 `datapack_list` still returns one array and is fine for an account with a

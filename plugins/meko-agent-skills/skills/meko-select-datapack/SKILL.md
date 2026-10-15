@@ -139,7 +139,7 @@ Reply with: a number (1-10) to pin · a substring to search · `next` / `prev` t
 
 When a pin exists, mark its row in the table with `←  (pinned)` in the Active? column. The pinned datapack may not be on the current page; the header line already names it.
 
-In the legend, the number range is the rows on the current page (`11-20` on page 2). Offer `next` only when `has_more` is true and `prev` only after page 1.
+In the legend, the number range is the rows on the current page (`11-20` on page 2). Offer `next` only when `has_more` is true and `next_cursor` is non-empty. An empty `next_cursor` with `has_more` still true means this server cannot page further: tell the user to narrow with a substring, and do not send an empty cursor. Offer `prev` only after page 1.
 
 For a search (step 3), the count line is `Datapacks matching "<text>" (showing <first>-<last> of <total>):`, numbered from 1.
 
@@ -151,7 +151,7 @@ For a search (step 3), the count line is `Datapacks matching "<text>" (showing <
   datapack_search(conversation_id="<your conversation_id>", query="<text>", limit=10, include_total=true)
   ```
   This starts a new listing: reset the page number and the cursor list, and keep `<text>` as the filter so `next` / `prev` page through the matches. If `total` is 0, say *"No datapacks match `<text>`."* and re-prompt with the legend. If `total` is exactly 1, treat that row as the choice (announce it: *"One match: `<name>`. Pinning."*). Otherwise render the matches with the search count line from step 2.
-- **`next`** → if `has_more` is false, say this is the last page and re-prompt. Otherwise call `datapack_search` with the same `query` (if any), `limit=10` and `cursor="<next_cursor>"`, add that cursor to your list, and render the new page. Reuse the `total` you already have; you don't need `include_total` again.
+- **`next`** → if `has_more` is false, say this is the last page and re-prompt. If `next_cursor` is empty, say this server cannot page further and ask for a substring; do not send an empty cursor. Otherwise call `datapack_search` with the same `query` (if any), `limit=10` and `cursor="<next_cursor>"`, add that cursor to your list, and render the new page. Reuse the `total` you already have; you don't need `include_total` again.
 - **`prev`** → on page 1, say this is the first page and re-prompt. Otherwise drop the last cursor from your list and call `datapack_search` again with the same `query` and the cursor now at the end of the list (no cursor for page 1).
 - **`cancel`** → leave any existing pin in place; print *"Cancelled. Active datapack unchanged."* and stop.
 - **`clear` / `none` / `unpin`** → delete the pin file (see step 4); print *"Datapack pin cleared. Agent-driven calls can use the server default now; automatic capture will switch on the next new session."* and stop.
