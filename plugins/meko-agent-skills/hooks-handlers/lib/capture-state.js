@@ -294,6 +294,21 @@ function blockedOutcome(failureClass, error, extras) {
 }
 
 /**
+ * MEKO-635: resumable sessions (OpenCode) must not be finalized as
+ * confirmed_dead by timer idle or cross-session recovery. Only OpenCode sets
+ * this policy today; other clients continue to finalize as before. Existing
+ * pre-MEKO-635 `client: "opencode"` watermarks without an explicit
+ * `pending_turn_policy` field are also treated as resumable so upgrades don't
+ * finalize a turn that a later snapshot could still complete.
+ */
+function isResumableState(state) {
+  if (!state || typeof state !== "object") return false;
+  if (state.pending_turn_policy === "resumable") return true;
+  if (state.pending_turn_policy == null && state.client === "opencode") return true;
+  return false;
+}
+
+/**
  * Validate a candidate v2 state object.
  * @returns {{ ok:true, state:Object } | { ok:false, delivery:"blocked", failure_class:"state_corrupt", error:string }}
  */
@@ -949,6 +964,8 @@ function writeSessionIntent(sessionId, fields) {
               last_error: null,
               last_success_at: null,
               blocked_reason: null,
+              // null = finalize unless client is opencode (isResumableState).
+              pending_turn_policy: null,
             };
 
       const conversationId =
@@ -985,6 +1002,12 @@ function writeSessionIntent(sessionId, fields) {
           : "needs_conversation",
         last_activity_at: nowIso(),
         updated_at: nowIso(),
+        // MEKO-635: preserve or set pending_turn_policy. Only "resumable" is a
+        // meaningful non-default value today; anything else stays null.
+        pending_turn_policy:
+          f.pending_turn_policy !== undefined
+            ? (f.pending_turn_policy === "resumable" ? "resumable" : null)
+            : (base.pending_turn_policy === "resumable" ? "resumable" : null),
       };
 
       if (f.last_line_number != null && existing.missing) {
@@ -1077,6 +1100,9 @@ function rebucket(state, newConversationId) {
     next_retry_at: null,
     attempt_count: 0,
     consecutive_exchange_drops: 0,
+    // A replacement guard belongs only to the conversation that set it.
+    recovered_from_conversation_id: null,
+    missing_conversation_streak: null,
     updated_at: nowIso(),
     last_activity_at: nowIso(),
   };
@@ -1478,6 +1504,18 @@ function sessionHealthBucket(entry) {
     fc === "datapack"
   ) {
     return "blocked_action_required";
+  }
+  // A session that has delivered everything is healthy even if an earlier
+  // attempt failed: failure_class records the last attempt, not outstanding
+  // work. Without this, one transient blip pins a closed, fully drained
+  // session to degraded_retrying forever and the rollup reports degraded with
+  // an empty queue. Blocked classes are checked above and still win, since
+  // those need a human.
+  if (
+    (state.delivery === "complete" || state.delivery === "idle") &&
+    coerceNonNegInt(state.queued_exchanges, 0) === 0
+  ) {
+    return "healthy";
   }
   if (
     state.delivery === "retry_wait" ||
@@ -2093,6 +2131,7 @@ module.exports = {
   // normalize / validate
   normalizeState,
   validateV2,
+  isResumableState,
 
   // persistence
   readState,

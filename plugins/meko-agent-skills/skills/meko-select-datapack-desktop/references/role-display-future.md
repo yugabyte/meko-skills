@@ -38,9 +38,15 @@ Note that the upstream Go source (the `Datapack` struct in `api_server/internal/
 
 ## Counts are not on the list response
 
-Neither `datapack_search` nor `datapack_list` returns usable counts. The list handler on the Meko server doesn't run the per-datapack queries that fill `memory_count`, `knowledge_count`, `learnings_count` or `collective_memory_count`, so in the full-row shape all four are zero on every row. `datapack_search` returns summary rows that leave them out, and the MCP client strips them from `datapack_list`.
+Neither `datapack_search` nor `datapack_list` computes counts; their rows carry no count fields. If the user asks for counts, call `datapack_describe(datapack_id=<id>, conversation_id="<conversation id>")` and read them from that response:
 
-If the user asks for counts, call `datapack_describe(datapack_id=...)` on the rows they care about. That is the call that runs the count queries. Don't add count columns to the table, don't invent numbers, and don't report zero from a list row.
+- `memory_count`: all memories stored in the datapack.
+- `collective_memory_count`: memories promoted to shared knowledge.
+- `learnings_count`: memories awaiting a promotion decision.
+- `knowledge_base_file_count`: uploaded KB documents (`null` if the status endpoint is unreachable).
+- `knowledge_chunk_count`: KB chunks across all documents. `knowledge_count` is a deprecated alias.
+
+Don't add counts to the table silently, and never invent the numbers.
 
 ## Sharing UI vs API state
 

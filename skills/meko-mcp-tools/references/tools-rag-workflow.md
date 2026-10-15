@@ -39,7 +39,7 @@ knowledgebase_search(
     limit=10)
 ```
 
-Required: `query`, `agent_id`, `conversation_id`, `datapack_id`.
+Required: `query`, `conversation_id`, `datapack_id`.
 Unlike the memory tools, `datapack_id` has no default here — you must
 pass it explicitly. `agent_id` is **ignored for filtering** on this
 tool (KB results are team-shared on the datapack), but you still pass
@@ -53,10 +53,12 @@ Populated KB:
 {
   "results": [
     {
-      "content": "<chunk text>",
-      "similarity": 0.87,
-      "source_uri": "<original source URI>",
-      "document_name": "<file key>",
+      "id": "<chunk id>",
+      "chunk_text": "<chunk text>",
+      "document_id": "<KB document id; pass to knowledgebase_delete_document>",
+      "metadata_filters": {},
+      "distance": 0.31,
+      "match_type": "semantic" | "keyword" | "hybrid",
       ...
     },
     ...
@@ -64,6 +66,8 @@ Populated KB:
   "count": <int>
 }
 ```
+
+Lower `distance` is closer. Promoted memories appear as hits whose `metadata_filters.source` is `"memory"`. Hits carry no filename, so show the user the `document_id` and chunk text when they need to identify a file.
 
 Empty or nonexistent KB: `{"results": [], "count": 0}` (no error,
 just an empty array).
