@@ -34,7 +34,7 @@ Use the field directly in the **Role** column:
 
 Do not invent values, do not normalize the casing, do not display `"Owner"` if the field says `"owner"`. The deployed schema is the source of truth.
 
-Note that the upstream Go source (the `Datapack` struct in `api_server/internal/models/models.go` of the `meko` API-server repo) does NOT declare `grant` — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
+Note that the server's `Datapack` model doesn't declare `grant`: the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
 ## Counts are not on the list response
 

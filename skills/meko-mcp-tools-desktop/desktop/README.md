@@ -183,7 +183,7 @@ On Cloud Meko, `agent_id` is a row-level column value — any string works, it n
 
 ### "Conversation tools don't work"
 
-Conversation tools require Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`). The other 19 tools work without Langfuse. If you don't need conversation persistence, you can skip this.
+Conversation tools require Langfuse credentials (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`). The other tools work without Langfuse. If you don't need conversation persistence, you can skip this.
 
 ### "Skill doesn't trigger"
 

@@ -91,10 +91,11 @@ knowledgebase_upload_document(
     content_head_base64="<base64 of the file's first ~4KB>")
 ```
 
-```
-curl -F key=<fields.key> -F policy=<fields.policy> ... \
-     -F file=@/local/path/report.pdf <url>
-```
+Build the POST from every key in the response's `fields`, not a hand-picked list:
+a missing signed field such as `x-amz-security-token` makes S3 answer 403. Use
+the Python, curl, or PowerShell snippet under `knowledgebase_upload_document`
+in `tools-cookbook.md`. Confirm with the user first: the file becomes visible to
+every datapack member.
 
 Required: `filename`, `size` (the exact byte count — the URL accepts no
 other length), `content_hash`, `conversation_id`, `content_head_base64`. `content_hash` is the SHA-256 hex digest of the
@@ -103,9 +104,8 @@ the S3 key, so it also drives the dedup check. A response with
 `already_uploaded: true` means identical content already exists; skip
 the S3 POST entirely, there is nothing left to upload. Otherwise POST
 as above: every key in `fields` as a form field (in order), then the
-bytes last as a field named `"file"`. api_server never buffers the
-file — a background watcher registers the object once it lands, so no
-separate confirm call is needed after the POST. Accepted extensions:
+bytes last as a field named `"file"`. Meko registers the object once
+it lands, so no separate confirm call is needed after the POST. Accepted extensions:
 pdf, txt, text, md, json, csv, xml, html, htm; `content_head_base64` is
 always sniffed against the extension before requesting the URL,
 rejecting an obvious mismatch immediately instead of waiting for the

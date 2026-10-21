@@ -310,9 +310,13 @@ Returns `{"document_id", "chunks_deleted", "s3_deleted"}` — if `s3_deleted` is
 
 ### knowledgebase_upload_document
 
-**When to use:** Get a file's bytes into the datapack's KB for later `knowledgebase_search` retrieval — a file already on disk, or one generated mid-conversation. This tool never touches the file's bytes itself — it only requests a presigned S3 URL (api_server's `pending_uploads` watcher records it and reconciles the object once it lands, with no separate confirm call needed). **The caller POSTs the file to the returned `url` directly** — multipart/form-data, every key in `fields` as a form field (in order), then the file's bytes last as a field named `"file"`.
+**When to use:** Get a file's bytes into the datapack's KB for later `knowledgebase_search` retrieval — a file already on disk, or one generated mid-conversation. This tool never touches the file's bytes itself; it only requests a presigned S3 URL. Meko registers the file once it lands, so there's no separate confirm call. **The caller POSTs the file to the returned `url` directly** — multipart/form-data, every key in `fields` as a form field (in order), then the file's bytes last as a field named `"file"`.
 
-**Do this immediately after the tool call returns, in the same turn — don't wait to be asked.** The upload is only half-done once you have `url`/`fields`; nothing else completes it for you.
+**Confirm first.** The file goes into the datapack's shared knowledge base, which every member can read. Before calling the tool, tell the user which file and datapack, say the team will see it, and wait for a yes.
+
+**You need a shell that can make the POST** (Python, curl, or PowerShell, below). Without one, as in Claude Desktop by default, don't call the tool: point the user at Datapack → Actions → **Add Knowledge**. An issued URL holds its `size` against the storage quota for up to 15 minutes even if nothing is uploaded.
+
+**After the user confirms and the tool returns, POST the file in the same turn.** The upload is only half-done once you have `url`/`fields`; nothing else completes it for you.
 
 **First, compute `content_hash` and `content_head_base64` — both required — *before* calling the tool at all. `content_head_base64` is compulsory: the tool refuses with `content_head_base64_required` if it's missing or blank, so there's no path that skips the sniff.**
 
@@ -370,11 +374,14 @@ if not resp.get("already_uploaded"):
 **Linux/macOS, curl (needs `jq`; builds the `-F` flags dynamically from whatever `fields` actually contains — a signer using temporary credentials adds `x-amz-security-token`, and extra policy conditions add their own fields, so a hardcoded field list drops them and S3 answers 403 on a form missing a signed field):**
 
 ```bash
-FIELDS=()
-while IFS= read -r -d '' key && IFS= read -r -d '' value; do
-    FIELDS+=(-F "${key}=${value}")
-done < <(echo "$RESPONSE_JSON" | jq -j '.fields | to_entries[] | (.key, "\u0000", .value, "\u0000")')
-curl -sS "${FIELDS[@]}" -F file=@/local/path/report.pdf "$URL"
+if [ "$(echo "$RESPONSE_JSON" | jq -r '.already_uploaded')" != "true" ]; then
+    URL=$(echo "$RESPONSE_JSON" | jq -r '.url')
+    FIELDS=()
+    while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+        FIELDS+=(-F "${key}=${value}")
+    done < <(echo "$RESPONSE_JSON" | jq -j '.fields | to_entries[] | (.key, "\u0000", .value, "\u0000")')
+    curl -sS --fail "${FIELDS[@]}" -F file=@/local/path/report.pdf "$URL"
+fi
 ```
 
 **Windows PowerShell 7+ (`Invoke-RestMethod -Form` takes the whole `fields` object as a hashtable — no per-field enumeration needed at all; use `[ordered]@{}`, not a plain `@{}`, since S3 requires `file` to be the *last* form field and a plain hashtable has no guaranteed enumeration order):**
@@ -391,7 +398,7 @@ if (-not $resp.already_uploaded) {
 
 **Windows cmd.exe:** cmd.exe has no built-in JSON parsing, so there's no safe way to build the `-F` flags dynamically from whatever `fields` contains without an extra tool. Rather than hardcode a field list that silently drops fields (e.g. `x-amz-security-token` on temporary credentials, or extra policy conditions) and fail with a confusing S3 403, use the PowerShell or Python snippet above even from a cmd.exe-driven workflow.
 
-`size` must be the file's exact length in bytes, and the URL only accepts a body of exactly that size and SHA-256, for 5 minutes. Accepted extensions: pdf, txt, text, md, json, csv, xml, html, htm. `content_head_base64` — the file's first 3072 bytes (api_server's sniff length), or the whole file if shorter, base64-encoded — is **required**: the tool sniffs it against the extension before requesting the URL and rejects an obvious mismatch (e.g. a renamed file) at once as `VALIDATION_ERROR`; a missing or blank one is `content_head_base64_required`. Text files must be UTF-8, because indexing reads UTF-8 only: a Latin-1 or Excel "CSV (Windows)" file is refused with a message to save it as UTF-8 (Excel: "CSV UTF-8"). Samples up to 4096 bytes are accepted and trimmed, so older snippets that send 4096 still work. A mismatch api_server catches on its own surfaces later as `state: "abandoned"` from `knowledgebase_document_status`. Idempotent — uploading the same content twice (by SHA-256) returns `already_uploaded: true` with an empty `url` and no `fields`; if that file's indexing never started or failed, the repeat queues it again.
+`size` must be the file's exact length in bytes, and the URL only accepts a body of exactly that size and SHA-256, for 5 minutes. Accepted extensions: pdf, txt, text, md, json, csv, xml, html, htm. `content_head_base64` — the file's first 3072 bytes, or the whole file if shorter, base64-encoded — is **required**: the tool sniffs it against the extension before requesting the URL and rejects an obvious mismatch (e.g. a renamed file) at once as `VALIDATION_ERROR`; a missing or blank one is `content_head_base64_required`. Text files must be UTF-8, because indexing reads UTF-8 only: a Latin-1 or Excel "CSV (Windows)" file is refused with a message to save it as UTF-8 (Excel: "CSV UTF-8"). Samples up to 4096 bytes are accepted and trimmed, so older snippets that send 4096 still work. A mismatch the server catches later surfaces as `state: "abandoned"` from `knowledgebase_document_status`. Idempotent — uploading the same content twice (by SHA-256) returns `already_uploaded: true` with an empty `url` and no `fields`; if that file's indexing never started or failed, the repeat queues it again.
 
 ```
 knowledgebase_upload_document(
@@ -435,7 +442,7 @@ After a fresh upload, POST the file to `url` yourself (see above), then save `ke
 - `VALIDATION_ERROR` — missing filename, unsupported extension, missing/malformed `content_hash`, size ≤ 0, invalid or oversized `content_head_base64`, a sample shorter than `min(size, 3072)` bytes or longer than `size` (so `size` is wrong), or the sampled content doesn't match its extension.
 - `FREE_TIER_KB_STORAGE_LIMIT` / `STANDARD_TIER_KB_STORAGE_LIMIT` (`status` 402) — no room left in the storage quota. Tell the user to free space or upgrade instead of retrying: every issued URL holds its `size` against the quota until the file is registered, or for up to 15 minutes if it is never uploaded.
 
-Every error from api_server also carries `status`, its HTTP status code.
+Every error from the server also carries `status`, its HTTP status code.
 - `knowledgebase_upload_document_failed` — unexpected error (see `detail`).
 - The actual S3 POST isn't made through this tool, so its own failures (e.g. the body exceeding the cap the URL was signed under) surface to whatever made that call directly, not from this tool.
 
