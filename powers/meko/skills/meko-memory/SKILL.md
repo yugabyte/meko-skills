@@ -4,7 +4,7 @@ description: Use Meko long-term memory and team knowledge from Kiro. Covers sess
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.1.0"
+  version: "1.2.0"
   tags: mcp, memory, knowledge-base, datapack, meko, kiro
 ---
 <!--
@@ -110,8 +110,13 @@ Each datapack has its own memory store and knowledge base. When you omit
   see each other's content in separate datapacks: `agent_id` labels writes but
   doesn't isolate them.
 
-To add documents to a knowledge base, point the user to the Meko Cloud UI:
-**Datapack > Actions > Add Knowledge**. MCP has no document upload tool.
+Every datapack member can read the knowledge base, so before you add a file,
+name the file and the datapack, say the team will see it, and wait for the
+user to agree. Then, if you have the file's bytes, call
+`knowledgebase_upload_document` to get a presigned URL, POST the file to it,
+and check indexing with `knowledgebase_document_status`. Accepted types are
+PDF, TXT, MD, JSON, CSV, XML, and HTML. Otherwise, point the user to the Meko
+Cloud UI: **Datapack > Actions > Add Knowledge**.
 
 ## Recall
 

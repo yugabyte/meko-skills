@@ -17,7 +17,7 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "2.10.0"
+  version: "2.11.0"
   tags: mcp, yugabytedb, tools, datapack, memory, conversation, rag, meko, desktop
 ---
 <!--
@@ -37,7 +37,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide (Desktop)
 
-Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 26 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
+Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 28 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
 
 **Read this first.** The Meko server extracts durable memories automatically from the conversation turns you post to it — the extraction runs *inside* `conversation_add_message`. Claude Desktop has no capture hooks, so **capturing substantive turns via `conversation_add_message` is a core part of using this skill.** Do that and memory takes care of itself: facts the user states get extracted and stored without a separate `memory_add`. Explicit `memory_add` is reserved for a few narrow cases (below). See "Per-turn conversation capture" — it's the heart of this skill.
 
@@ -159,8 +159,8 @@ Your job is not to decide fact-by-fact what to `memory_add`. It's to **post ever
 | User asks "what do you know about X?" | `context_search(agent_id="claude_desktop")`. One call returns separate memory, knowledge-base, and past-conversation buckets; report each. Confirm an empty memory or KB bucket with `memory_search` or `knowledgebase_search` before saying nothing is stored. |
 | User asks "what do we (as a team) know about X?" or about uploaded documents | `knowledgebase_search` (returns uploaded docs + promoted memories). |
 | User asks to share specific private memories with the team | Follow the `memory_promote` confirmation workflow below. Never promote based on a fuzzy search result or implied consent. |
-| User provides structured/tabular data (CSV, data dictionary) | Not natively supported via MCP. Point the user at the UI's Add Knowledge upload; do not `memory_add` row-by-row. |
-| User wants to add documents to the team's knowledge base | Point them at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). MCP ingestion tools are not available on Cloud. |
+| User provides structured/tabular data (CSV, data dictionary) | If it's an actual file the user wants in the team's knowledge base, `knowledgebase_upload_document` accepts `.csv` directly (confirm first; see below). If it's pasted/described data with no file behind it, still don't `memory_add` it row-by-row — ask the user for it as a file, or point them at the UI's Add Knowledge upload. |
+| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. If you (the agent) have the file's bytes and can make an HTTP POST from a shell (Claude Desktop usually can't; see `tools-cookbook.md`), call `knowledgebase_upload_document`. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
 
 ## Conversation capture — mechanics
 
@@ -278,12 +278,12 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 ## Key concepts
 
-1. **26 tools in 7 groups** (all available in production): Retrieval (1: `context_search`), Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (2 — `knowledgebase_search`, `knowledgebase_delete_document`), Datapack (6, including `datapack_search`), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. KB ingestion is UI-only (Datapack → Actions → Add Knowledge); raw SQL is not exposed. See `tools-overview.md`.
+1. **28 tools in 7 groups** (all available in production): Retrieval (1: `context_search`), Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (4 — `knowledgebase_search`, `knowledgebase_delete_document`, `knowledgebase_upload_document`, `knowledgebase_document_status`), Datapack (6, including `datapack_search`), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. Raw SQL is not exposed. See `tools-overview.md`.
 2. **datapack_id routing**: DB, RAG, and memory tools accept optional `datapack_id` (default datapack if omitted). `knowledgebase_search` is the exception: `datapack_id` is **required** there.
 3. **agent_id is multi-agent**: For Claude Desktop, use `agent_id="claude_desktop"` for normal writes and `agent_id="meko_agent"` for cross-project facts. Writes are attributed to `(datapack_id, user_id, agent_id)`. Personal memory reads and `conversation_list` span all of this user's agents; `conversation_get` remains agent-owned. `knowledgebase_search` ignores `agent_id` entirely. See `tools-agent-id-conventions.md`.
 4. **Personal memory vs. team-shared knowledge**: Un-promoted memories are scoped per-user — readable across all of that user's agents, but no other user can see them. With explicit confirmation, `memory_promote` moves exact memories into Shared Knowledge; the Cloud UI's Learnings tab is an alternative. Promoted content is visible to every datapack member. `knowledgebase_search` is the MCP read path for both Shared Knowledge and uploaded documents.
 5. **conversation_id IS the Langfuse trace ID**: every MCP tool call inside a conversation becomes a span under that trace. Observable in the Meko UI's Observe hub. See `tools-memory-vs-conversation.md`.
-6. **Adding documents to the team knowledge base is UI-only on Cloud today**: user uploads files via Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each). The MCP ingestion tools are not available on Cloud. See `tools-rag-workflow.md`.
+6. **Adding a file to a knowledge base**: the file becomes visible to every datapack member, so confirm with the user first. Call `knowledgebase_upload_document` only if you have the file's bytes and can POST them to the returned URL from a shell; Claude Desktop usually can't, so point the user at the UI instead. A human uploads via Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each) instead. KB *lifecycle* (creating/renaming/deleting an index, adding a source manually) has no MCP tool and is still UI-only. See `tools-rag-workflow.md`.
 7. **Manual conversation capture**: Claude Desktop does not have automatic capture hooks. Create and save conversations explicitly when sessions are valuable.
 8. **Memory latencies are not cheap**: observed on prod 2026-05-07 — `memory_add` 12-21s/call (calls OpenAI), `memory_search` 2-6s/call. Budget accordingly. On the Free tier, `conversation_add_message` and `context_search` are each capped at 1,000 lifetime calls, and `memory_search` and `knowledgebase_search` at 1,000. Per-turn capture draws down the `conversation_add_message` cap, so on Free skip trivial turns. When a call returns `free_tier_limit_reached`, report it and stop calling that tool; it can arrive as HTTP 403 but isn't an authentication problem.
 9. **Known limitations**: see `tools-known-limitations.md` before attempting write operations on tools that appear in the catalog but aren't available on Cloud.
@@ -293,7 +293,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 26 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 28 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-rag-workflow.md` | End-to-end RAG pipeline flow |

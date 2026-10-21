@@ -67,9 +67,11 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 | Error | Meaning | What to do |
 |---|---|---|
 | `datapack_access_denied` | The `datapack_id` isn't a UUID, or it isn't owned by or shared with your account. The access check also fails closed on a transient server database error. | Retry once. If it repeats, stop; don't switch to another datapack. If the id came from a pin, ask the user to re-pin with the select-datapack skill. |
-| `datapack_id_required` | The call couldn't resolve a datapack. Conversation reads and writes (including `conversation_list`), `datapack_describe`, and `knowledgebase_delete_document` return it. | Pass the pinned `datapack_id`. Don't drop the parameter to make the call pass. |
+| `datapack_id_required` | The call couldn't resolve a datapack. Conversation reads and writes (including `conversation_list`), `datapack_describe`, `knowledgebase_upload_document`, `knowledgebase_document_status`, and `knowledgebase_delete_document` return it. | Pass the pinned `datapack_id`. Don't drop the parameter to make the call pass. |
 | `not_found` from `memory_get_by_id`, `memory_update`, or `memory_delete_by_id` | The memory doesn't exist **or** belongs to another account. The server returns the same error for both on purpose. | Check the id came from a search in this datapack. |
 | `memory_is_promoted` | The memory was promoted to shared knowledge and is read-only through MCP. | Point the user at the Cloud UI Learnings tab. |
+| `read_only_access` | You're a viewer on this datapack. Viewers can't write conversations or memories, call `memory_promote`, `artifact_put`, or `track_token_usage`, or delete a conversation someone else started. | Don't retry, and don't switch datapacks to get around it. Tell the user; an owner or maintainer can change their role. |
+| `role_lookup_failed` | The server couldn't read your role for this datapack, so it refused the write. | Retry. |
 | `invalid_run_id` | `memory_delete_all` got a `run_id` that isn't a conversation id. | Pass the conversation UUID, or omit `run_id`. |
 | `embedder_error` from `knowledgebase_search` | The server couldn't resolve the embedding setup for this datapack's index. | Report it; retrying won't help. |
 | `invalid_force_source` from `context_search` | `force_source` isn't `auto`, `memory`, `knowledge_base`, or `conversation`. | Omit `force_source`. |

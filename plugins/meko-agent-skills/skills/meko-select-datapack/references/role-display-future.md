@@ -34,7 +34,7 @@ Use the field directly in the **Role** column:
 
 Do not invent values, do not normalize the casing, do not display `"Owner"` if the field says `"owner"`. The deployed schema is the source of truth.
 
-Note that the upstream Go source (`/Users/amiram.mizne/sandbox/GitHub/meko/api_server/internal/models/models.go`) does NOT declare `grant` on the `Datapack` struct — the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
+Note that the server's `Datapack` model doesn't declare `grant`: the deployed server enriches the response beyond what the public Go code lists. Don't rely on the public struct for the wire schema; trust the actual response.
 
 ## Counts on the list response
 
@@ -42,9 +42,11 @@ Neither `datapack_search` nor `datapack_list` carries usable count fields. The l
 
 If the user asks for counts, call `datapack_describe(datapack_id=..., conversation_id="<conversation id>")` on the specific rows they care about — that's the path that runs the count queries. Don't invent numbers or claim zero from the list response.
 
-## Sharing UI vs API state
+## Sharing a datapack
 
-The Cloud console "Share <datapack>" page (`meko_ui/src/features/datapacks/pages/DatapackSharePage.tsx`) shows interactive controls with "Coming Soon" overlays on a few specific actions (e.g. invite-by-email link sharing, transfer-ownership). Those overlays mean *those specific UI affordances* aren't shipped — NOT that the underlying `grant`/sharing model is absent. Contributor/maintainer/viewer grants are functional in the data layer today; only the user-facing self-serve invite flow is gated.
+An owner or maintainer shares a datapack from the Cloud console's **Share** page. Each datapack has one share link. The owner or maintainer can turn it on or off, reset it, and choose whether people who open it join as viewer or contributor. Anyone signed in who opens an active link joins straight away. There are no MCP tools to manage sharing.
+
+A viewer is read-only, and the server enforces it: over MCP, conversation and memory writes return `read_only_access`. If the user picks a datapack where they're a viewer, tell them that Meko won't record conversations or save memories there.
 
 ## Why the skill ships without Mine / Shared / All filter tabs
 
