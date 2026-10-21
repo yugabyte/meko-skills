@@ -119,7 +119,9 @@ const NEEDS_YOU_LABELS = {
 /**
  * Claude Code status bar text for capture, or "" when there is nothing to
  * show. Built when the health cache is written and read by
- * meko-statusline.sh. `autofix` is the last `--capture-cleanup fix` summary
+ * meko-statusline.sh, which the npm installer copies and wires into Claude
+ * Code's statusLine; the plugin ships no status-line reader, so a plugin-only
+ * install shows nothing. `autofix` is the last `--capture-cleanup fix` summary
  * (autofix-last.json). Uses a clock time for the next automatic fix, so the
  * text stays right between cache writes.
  *
