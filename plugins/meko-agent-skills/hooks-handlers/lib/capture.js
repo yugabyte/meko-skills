@@ -13,6 +13,10 @@
  *   node capture.js checkpoint     # stdin hook JSON → drainSession
  *   node capture.js drain          # stdin JSON → drain one session; stdout DrainResult
  *   node capture.js recover        # alias of drain (single-session recovery)
+ *   node capture.js move           # stdin {"session_id"} → move the unsent
+ *                                  # tail to a new conversation; stdout
+ *                                  # {ok, from, to, last_line_number} or
+ *                                  # {ok:false, busy?, error}
  *
  * drain / recover stdin contract (Workstream C):
  *   {
@@ -1563,6 +1567,9 @@ function classifyPersistentCaptureFailure(err, opts) {
     // access is (re-)granted out of band, so the caller should hold rather
     // than retry forever or silently drop the turn.
     ["datapack_access_denied", /datapack_access_denied/],
+    // MEKO-876: a viewer of a shared datapack can't record conversations.
+    // Account-scoped like the above: it stays refused until the role changes.
+    ["read_only_access", /read_only_access/],
   ];
   for (const [code, pattern] of persistentPatterns) {
     if (pattern.test(normalized)) {
@@ -1575,6 +1582,7 @@ function classifyPersistentCaptureFailure(err, opts) {
         subscription_required: "capture requires an active subscription",
         entitlement_denied: "the account is not entitled to capture conversations",
         datapack_access_denied: "the account does not have access to the target datapack",
+        read_only_access: "the account has viewer (read-only) access to the target datapack",
       };
       return { code, reason: reasons[code], scope: "account", detail };
     }
@@ -1769,6 +1777,111 @@ async function recoverMissingConversation({
     return { ok: false, error: `failed to persist recovered conversation: ${written.error}` };
   }
   return { ok: true, state: written.state || next, convId: newConvId };
+}
+
+/**
+ * Move a session's unsent turns to a new conversation on request, without
+ * waiting for capture to see `not_found` twice. Used by
+ * `--capture-cleanup fix` when the recorded conversation can't be served:
+ * its owner reads as `None`, its lookup keeps failing, or a replay loop
+ * bloated it. Holds the drain lease for the whole move, keeps the cursor,
+ * and creates the conversation under the session's recorded owner and
+ * datapack.
+ *
+ * The caller can pass `expected_conversation_id`. Under the lease, the move
+ * is refused (`changed: true`) when the session's conversation no longer
+ * matches it, or when a previous move is still waiting for its new
+ * conversation to accept a turn (`recovered_from_conversation_id`): a hook
+ * drain may have recovered or delivered the session while the caller waited.
+ *
+ * @param {{ session_id: string, expected_conversation_id?: string }} options
+ * @returns {Promise<{ok: boolean, busy?: boolean, changed?: boolean, from?: string, to?: string, last_line_number?: number, error?: string}>}
+ */
+async function moveSessionToNewConversation(options) {
+  const sessionId = String((options && options.session_id) || "").trim();
+  if (!sessionId) return { ok: false, error: "session_id required" };
+  const lease = captureState.acquireLease(sessionId);
+  if (!lease.ok) {
+    return {
+      ok: false,
+      busy: lease.failure_class === "ownership",
+      error: lease.error || "drain lease unavailable",
+    };
+  }
+  try {
+    const read = captureState.readState(sessionId);
+    if (!read.ok) return { ok: false, error: read.error || "watermark unreadable" };
+    let state = read.state;
+    if (!state.agent_id) return { ok: false, error: "recorded owner missing" };
+    const expected = options && options.expected_conversation_id;
+    // An automatic cleanup run must not end a park the user set with `stop`
+    // after that run scanned the session.
+    if (
+      options &&
+      options.respect_stop &&
+      state.parked &&
+      state.parked.reason === "stop" &&
+      state.failure_class &&
+      state.next_retry_at === captureState.CLEANUP_PARK_UNTIL
+    ) {
+      return { ok: false, paused: true, error: "paused by the user with stop" };
+    }
+    if (state.recovered_from_conversation_id) {
+      return {
+        ok: false,
+        changed: true,
+        error: "a previous move is waiting for its new conversation to accept a turn",
+      };
+    }
+    if (expected && state.conversation_id !== expected) {
+      return {
+        ok: false,
+        changed: true,
+        error: `the session moved to conversation ${state.conversation_id} while waiting`,
+      };
+    }
+    // Checked again here, under the lease: the session may have become live
+    // after --capture-cleanup planned the move. SessionStart gave a live
+    // session's agent its conversation_id, and a move can't tell it the new one.
+    if (options && options.defer_if_live && captureState.sessionLooksLive(state)) {
+      return { ok: false, deferred: true, error: "the session is still open" };
+    }
+    // MEKO-592: a session that started before the user pinned a datapack has
+    // none in its watermark. Re-read the pin the way drainSession does, so
+    // the new conversation is created in the datapack its turns will go to.
+    if (!state.datapack_id) {
+      const pin = readDatapackPin(state.agent_id);
+      if (pin && pin.datapack_id) {
+        state = { ...state, datapack_id: pin.datapack_id, datapack_name: pin.datapack_name || null };
+      }
+    }
+    await mcpInitialize();
+    const moved = await recoverMissingConversation({
+      // cleanup_moved_epoch lets --capture-cleanup count epochs since its own
+      // last move, not the session's lifetime total. The move also ends any
+      // park the cleanup tool set (the retry fields are reset here).
+      state: {
+        ...state,
+        parked: null,
+        cleanup_moved_epoch: Number(state.conversation_epoch || 0) + 1,
+      },
+      sessionId,
+      agentId: state.agent_id,
+      transcriptPath: state.transcript_path,
+      datapackId: state.datapack_id || null,
+    });
+    if (!moved.ok) return { ok: false, error: moved.error };
+    return {
+      ok: true,
+      from: state.conversation_id || null,
+      to: moved.convId,
+      last_line_number: moved.state.last_line_number,
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  } finally {
+    captureState.releaseLease(sessionId, lease.lease.token);
+  }
 }
 
 /**
@@ -2324,7 +2437,7 @@ function buildSessionStartFallbackContext(agentId, opts) {
   // act on.
   const reason = opts && opts.reason;
   const preamble = reason === "datapack_required"
-    ? "The SessionStart hook reached the Meko MCP server, but no datapack is pinned for this project, so the server declined to create a conversation. **Automatic conversation capture is idle**. Use `datapack_list` to find a datapack id, then invoke the `meko-select-datapack` skill (or your client's equivalent) to pin it. The next drain picks up the fresh pin and starts capturing this session's queued turns; until then, save facts explicitly."
+    ? "The SessionStart hook reached the Meko MCP server, but no datapack is pinned for this project, so the server declined to create a conversation. **Automatic conversation capture is idle**. Use `datapack_search(query=...)` (or `datapack_list` on a server without it) to find a datapack id, then invoke the `meko-select-datapack` skill (or your client's equivalent) to pin it. The next drain picks up the fresh pin and starts capturing this session's queued turns; until then, save facts explicitly."
     : "The SessionStart hook could not reach the Meko MCP server to create a conversation. **Automatic conversation capture is NOT running this session**, so the server-side extraction that normally saves memories for you will not fire. Fall back to saving facts explicitly.";
   return `## Meko Memory Instructions
 
@@ -2651,7 +2764,7 @@ async function handleSessionStart(hookInput) {
     const isDatapackRequired = err && err.code === "datapack_id_required";
     if (isDatapackRequired) {
       process.stderr.write(
-        `[meko-capture] SessionStart: no datapack pinned; auto-capture is idle. Pin one with datapack_list + meko-select-datapack; the next drain picks up the fresh pin.\n`,
+        `[meko-capture] SessionStart: no datapack pinned; auto-capture is idle. Pin one with datapack_search (or datapack_list) + meko-select-datapack; the next drain picks up the fresh pin.\n`,
       );
     } else if (err && err.isMcpToolError) {
       // Server accepted the call and returned a structured error (e.g.
@@ -3683,10 +3796,11 @@ async function main() {
     "checkpoint",
     "drain",
     "recover",
+    "move",
   ];
   if (!hookType || !known.includes(hookType)) {
     process.stderr.write(
-      "Usage: capture.js <session-start|before-submit-prompt|pre-compact|session-end|checkpoint|drain|recover>\n",
+      "Usage: capture.js <session-start|before-submit-prompt|pre-compact|session-end|checkpoint|drain|recover|move>\n",
     );
     process.exit(1);
   }
@@ -3699,7 +3813,11 @@ async function main() {
     process.stderr.write(
       `[meko-capture] Failed to parse hook input from stdin: ${err.message}\n`,
     );
-    if (hookType === "drain" || hookType === "recover") {
+    if (hookType === "move") {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, error: `invalid stdin JSON: ${err.message}` })}\n`,
+      );
+    } else if (hookType === "drain" || hookType === "recover") {
       process.stdout.write(
         JSON.stringify(
           makeDrainResult({
@@ -3717,6 +3835,12 @@ async function main() {
 
   if (hookType === "session-start") {
     await handleSessionStart(hookInput);
+    return;
+  }
+
+  if (hookType === "move") {
+    const result = await moveSessionToNewConversation(hookInput);
+    process.stdout.write(JSON.stringify(result) + "\n");
     return;
   }
 
@@ -3796,6 +3920,7 @@ module.exports = {
   addMessage,
   isMissingConversationError,
   recoverMissingConversation,
+  moveSessionToNewConversation,
 };
 
 if (require.main === module) {

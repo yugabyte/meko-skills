@@ -179,6 +179,8 @@ const requiredPluginPaths = [
   "skills/meko-select-datapack-desktop/SKILL.md",
   "hooks/hooks.json",
   "hooks-handlers/lib/capture.js",
+  // The checkpoint timer runs it for automatic repair.
+  "hooks-handlers/lib/capture-cleanup-cli.js",
 ];
 for (const p of requiredPluginPaths) {
   if (!pluginDir || !existsSync(join(pluginDir, p))) {

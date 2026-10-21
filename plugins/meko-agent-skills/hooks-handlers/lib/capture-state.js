@@ -131,6 +131,53 @@ function healthCacheFilename() {
   return envString("MEKO_HEALTH_CACHE", DEFAULTS.HEALTH_CACHE);
 }
 
+/**
+ * The retry date `--capture-cleanup` parks a session until. Hooks skip the
+ * network while failure_class is set and next_retry_at is in the future, so
+ * a session with this date is parked, not retrying.
+ */
+const CLEANUP_PARK_UNTIL = "9999-12-31T00:00:00.000Z";
+
+/**
+ * Automatic repair from the checkpoint timer. MEKO_AUTOFIX (on/off) wins when
+ * set; otherwise autofix-config.json in the capture directory, which the
+ * installer writes for --autofix / --no-autofix. On by default.
+ */
+function autofixEnabled() {
+  return autofixSetting().enabled;
+}
+
+/**
+ * Whether automatic repair is on, and what decided it: "env" (MEKO_AUTOFIX),
+ * "config" (autofix-config.json, written by --autofix / --no-autofix), or
+ * "default" (on).
+ */
+function autofixSetting() {
+  const raw = process.env.MEKO_AUTOFIX;
+  if (raw != null && raw !== "") {
+    return { enabled: !/^(0|off|false|no)$/i.test(String(raw)), source: "env", path: null };
+  }
+  const file = autofixConfigPath();
+  try {
+    const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (cfg && typeof cfg.enabled === "boolean") {
+      return { enabled: cfg.enabled, source: "config", path: file };
+    }
+  } catch {
+    /* no config: default on */
+  }
+  return { enabled: true, source: "default", path: null };
+}
+
+function autofixConfigPath() {
+  return path.join(watermarkDir(), "autofix-config.json");
+}
+
+/** Seconds between automatic `--capture-cleanup fix` runs on one machine. */
+function autofixIntervalSeconds() {
+  return Math.max(60, envInt("MEKO_AUTOFIX_INTERVAL", 1800));
+}
+
 // ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
@@ -160,6 +207,20 @@ function timerPidPath(sessionId) {
 
 function healthCachePath() {
   return path.join(watermarkDir(), healthCacheFilename());
+}
+
+/** Summary of the last `--capture-cleanup fix` run, manual or automatic. */
+function autofixLastPath() {
+  return path.join(watermarkDir(), "autofix-last.json");
+}
+
+function readAutofixLast() {
+  try {
+    const value = JSON.parse(fs.readFileSync(autofixLastPath(), "utf8"));
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1295,6 +1356,8 @@ const PERSISTENT_PATTERNS = [
   ["payment_required", /payment[_\s-]?required/i],
   ["subscription_required", /subscription[_\s-]?(required|inactive|expired)/i],
   ["entitlement_denied", /entitlement.*(denied|required|missing)|(?:denied|required|missing).*entitlement/i],
+  // A viewer of a shared datapack can't record conversations (MEKO-876).
+  ["read_only_access", /read_only_access/i],
 ];
 
 /**
@@ -1420,6 +1483,26 @@ function timerLooksLive(sessionId) {
   } catch {
     return false;
   }
+}
+
+/**
+ * A session whose client may still be writing turns: its lifecycle is
+ * active and its transcript changed within recoveryMinIdle() seconds, or its
+ * checkpoint timer is alive. --capture-cleanup uses it to decide drain or
+ * recover, and capture.js move re-checks it under the lease.
+ */
+function sessionLooksLive(state, nowMs) {
+  if (!state || state.lifecycle !== "active") return false;
+  const now = nowMs != null ? nowMs : Date.now();
+  if (state.transcript_path) {
+    try {
+      const st = fs.statSync(state.transcript_path);
+      if (now - st.mtimeMs < recoveryMinIdle() * 1000) return true;
+    } catch {
+      // A missing transcript says nothing about liveness; check the timer.
+    }
+  }
+  return timerLooksLive(state.session_id);
 }
 
 function buildEligibility(state, nowMs, options) {
@@ -1736,6 +1819,16 @@ function computeAggregateHealth(states, options) {
       queued_exchanges: q,
       dropped_exchanges: d,
       lifecycle: state ? state.lifecycle : null,
+      // Why --capture-cleanup parked this session ("stop", "drain failed: ...")
+      // while the park is in effect; null otherwise.
+      parked_reason:
+        state &&
+        state.parked &&
+        typeof state.parked === "object" &&
+        state.failure_class &&
+        state.next_retry_at === CLEANUP_PARK_UNTIL
+          ? String(state.parked.reason || "parked")
+          : null,
     });
   }
 
@@ -1781,6 +1874,16 @@ function writeHealthCache(health, options) {
     merged.last_notified_dropped = opts.clampDropped
       ? Math.min(previous, coerceNonNegInt(merged.dropped_exchanges, 0))
       : previous;
+  }
+  // A ready-made status bar text, so meko-statusline.sh needs no JSON parsing
+  // beyond one field. capture-notices requires this module, so load it here.
+  try {
+    const fields = require("./capture-notices").statuslineFields(merged, readAutofixLast());
+    merged.statusline = fields.statusline;
+    merged.statusline_until = fields.statusline_until != null ? fields.statusline_until : null;
+    merged.statusline_after = fields.statusline_after != null ? fields.statusline_after : null;
+  } catch {
+    /* keep the cache write even if the text can't be built */
   }
   try {
     atomicWriteJson(healthCachePath(), merged);
@@ -2117,6 +2220,13 @@ module.exports = {
   workerMaxAgeSeconds,
   timerMaxAge,
   healthCacheFilename,
+  CLEANUP_PARK_UNTIL,
+  autofixEnabled,
+  autofixSetting,
+  autofixConfigPath,
+  autofixIntervalSeconds,
+  autofixLastPath,
+  readAutofixLast,
 
   // paths
   watermarkDir,
@@ -2124,6 +2234,7 @@ module.exports = {
   leasePath,
   mutationLockPath,
   timerPidPath,
+  sessionLooksLive,
   healthCachePath,
   legacyErrorPath,
   agentSlug,
