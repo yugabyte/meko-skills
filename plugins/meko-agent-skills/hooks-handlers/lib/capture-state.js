@@ -1485,6 +1485,26 @@ function timerLooksLive(sessionId) {
   }
 }
 
+/**
+ * A session whose client may still be writing turns: its lifecycle is
+ * active and its transcript changed within recoveryMinIdle() seconds, or its
+ * checkpoint timer is alive. --capture-cleanup uses it to decide drain or
+ * recover, and capture.js move re-checks it under the lease.
+ */
+function sessionLooksLive(state, nowMs) {
+  if (!state || state.lifecycle !== "active") return false;
+  const now = nowMs != null ? nowMs : Date.now();
+  if (state.transcript_path) {
+    try {
+      const st = fs.statSync(state.transcript_path);
+      if (now - st.mtimeMs < recoveryMinIdle() * 1000) return true;
+    } catch {
+      // A missing transcript says nothing about liveness; check the timer.
+    }
+  }
+  return timerLooksLive(state.session_id);
+}
+
 function buildEligibility(state, nowMs, options) {
   const opts = options && typeof options === "object" ? options : {};
   const now = nowMs != null ? nowMs : Date.now();
@@ -2214,6 +2234,7 @@ module.exports = {
   leasePath,
   mutationLockPath,
   timerPidPath,
+  sessionLooksLive,
   healthCachePath,
   legacyErrorPath,
   agentSlug,

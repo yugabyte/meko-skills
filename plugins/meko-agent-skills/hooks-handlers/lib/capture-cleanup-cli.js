@@ -1471,6 +1471,7 @@ function moveSession(sid, ctx, expectedConversation) {
       session_id: sid,
       expected_conversation_id: expectedConversation || undefined,
       respect_stop: ctx.auto ? true : undefined,
+      defer_if_live: true,
     },
     ctx.env,
   );
@@ -1481,6 +1482,7 @@ function moveSession(sid, ctx, expectedConversation) {
     busy: Boolean(r.busy),
     changed: Boolean(r.changed),
     paused: Boolean(r.paused),
+    deferred: Boolean(r.deferred),
     error: r.error || run.stderr || "move failed",
   };
 }
@@ -1517,6 +1519,14 @@ function moveThenDrain(e, opts, ctx, wasParkedBefore) {
   }
   if (!moved.ok && moved.paused) {
     return { result: { session_id: sid, outcome: "paused_by_user" }, stop: false };
+  }
+  if (!moved.ok && moved.deferred) {
+    // The session became live after fix planned the move; capture.js
+    // refused it under the lease. A later fix moves it after it ends.
+    return {
+      result: { session_id: sid, outcome: "move_deferred", reason: "the session is still open; fix moves it to a new conversation after the session ends" },
+      stop: false,
+    };
   }
   if (!moved.ok && moved.changed) {
     // A hook recovered or delivered the session while fix waited for the

@@ -1840,6 +1840,12 @@ async function moveSessionToNewConversation(options) {
         error: `the session moved to conversation ${state.conversation_id} while waiting`,
       };
     }
+    // Checked again here, under the lease: the session may have become live
+    // after --capture-cleanup planned the move. SessionStart gave a live
+    // session's agent its conversation_id, and a move can't tell it the new one.
+    if (options && options.defer_if_live && captureState.sessionLooksLive(state)) {
+      return { ok: false, deferred: true, error: "the session is still open" };
+    }
     // MEKO-592: a session that started before the user pinned a datapack has
     // none in its watermark. Re-read the pin the way drainSession does, so
     // the new conversation is created in the datapack its turns will go to.
