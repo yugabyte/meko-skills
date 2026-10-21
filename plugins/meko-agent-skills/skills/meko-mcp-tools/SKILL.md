@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.3.0"
+  version: "3.4.0"
   tags: mcp, tools, datapack, memory, conversation, rag, meko
 ---
 <!--
@@ -24,7 +24,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide
 
-Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 26 MCP tools available in production.
+Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 28 MCP tools available in production.
 
 **Read this first.** On Claude Code, conversation capture is automatic (SessionStart / PreCompact / SessionEnd hooks) and the Meko server extracts durable memories from the captured turns on its own. Facts the user states in conversation are saved for you — you do **not** proactively call `memory_add` for them. Your active jobs are: **recall** what's already known (`context_search` first, then `memory_search` or `knowledgebase_search` for a single source), and the **few** save cases automatic extraction cannot reach. Details below.
 
@@ -115,8 +115,8 @@ Recall first; save only what capture cannot reach; never re-store a just-stated 
 | User asks "what do you know about X?" | `context_search`. One call returns separate memory, knowledge-base, and past-conversation buckets; report each. Confirm an empty memory or KB bucket with `memory_search` or `knowledgebase_search` before saying nothing is stored. |
 | User asks "what do we (as a team) know about X?" or about uploaded documents | `knowledgebase_search` (returns uploaded docs + promoted memories). |
 | User asks to share private memories | Follow the exact-ID `memory_promote` confirmation workflow below. |
-| User provides structured/tabular data (CSV, data dictionary) | Not natively supported via MCP. Point the user at the UI's Add Knowledge upload; do not `memory_add` row-by-row. |
-| User wants to add documents to the team's knowledge base | Point them at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). MCP ingestion tools are not available on Cloud. |
+| User provides structured/tabular data (CSV, data dictionary) | If it's an actual file, `knowledgebase_upload_document` accepts `.csv` directly (see below). If it's pasted/described data with no file behind it, still don't `memory_add` it row-by-row — ask the user for it as a file, or point them at the UI's Add Knowledge upload. |
+| User wants to add documents to the team's knowledge base | If you (the agent) have the file's bytes — already on disk, or generated mid-conversation — call `knowledgebase_upload_document` directly. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
 
 ### When to call memory_add
 
@@ -297,7 +297,7 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 26 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 28 tools available in production, with decision tree |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-datapack-workflow.md` | Datapack lifecycle and datapack_id routing |

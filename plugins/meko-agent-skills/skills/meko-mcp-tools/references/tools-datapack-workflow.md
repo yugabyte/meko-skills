@@ -42,12 +42,14 @@ datapack_create(name="sales_analytics",
 -- Returns: {"datapack_id": "dp-uuid-123", "datapack_name": "sales_analytics", ...}
 ```
 
-Provisioning agents and knowledge-base sources on a new datapack is **not** MCP-exposed. Use the Meko control plane:
+Provisioning agents and knowledge-base *sources* (registering/indexing a new source against a datapack) is **not** MCP-exposed. Use the Meko control plane:
 
 - **UI**: `app.mekodata.ai` → Datapacks → select datapack → Agents / Knowledge Bases
-- **REST**: `POST /datapacks/:datapack_id/agents`, `POST /datapacks/:datapack_id/knowledge-bases` (and the Add Knowledge UI for file uploads)
+- **REST**: `POST /datapacks/:datapack_id/agents`, `POST /datapacks/:datapack_id/knowledge-bases`
 
 If the user asks to set those up mid-session, point them at the control plane rather than inventing an MCP call that will fail.
+
+Uploading a *file* into an existing KB is a different, already-MCP-exposed operation — use `knowledgebase_upload_document` (see `tools-cookbook.md`) rather than routing the user to the Add Knowledge UI.
 
 ### Targeting a specific datapack on subsequent calls
 

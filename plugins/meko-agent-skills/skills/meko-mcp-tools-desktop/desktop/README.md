@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Meko MCP Tools — Claude Desktop Setup
 
-Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all <!--tool-count-->25<!--/tool-count--> Meko MCP tools correctly, and to handle errors gracefully.
+Use the Meko MCP tools skill natively in Claude Desktop. Because Desktop has no lifecycle hooks, the skill teaches Claude to capture each substantive turn by posting it via `conversation_add_message` (the server extracts durable memories from those posts), to reserve explicit `memory_add` for the narrow cases (the user says "remember this", a fact lives only in the assistant's output or a tool result, or a corrected fact needs overwriting), to classify information, to use all <!--tool-count-->28<!--/tool-count--> Meko MCP tools correctly, and to handle errors gracefully.
 
 ## Setup
 
@@ -100,7 +100,7 @@ Start a new conversation and say:
 
 > What datapacks do I have?
 
-Claude should call `datapack_list` and return your accessible datapacks. If it works, the MCP server and skill are both connected.
+Claude should call `datapack_search` (`datapack_list` on older servers) and return your accessible datapacks. If it works, the MCP server and skill are both connected.
 
 ### Step 4 (recommended): Make Desktop proactive
 
@@ -148,7 +148,7 @@ An explicit "remember this" is one of the narrow cases where the agent calls `me
 ### Save conversations (triggers conversation_create + conversation_add_message)
 > Save this conversation.
 
-### Manage datapacks (triggers datapack_list / datapack_create)
+### Manage datapacks (triggers datapack_search / datapack_create)
 > List all datapacks.
 
 ## Differences from Claude Code

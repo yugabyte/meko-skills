@@ -82,7 +82,7 @@ memory_add(agent_id="claude_desktop",
 
 **What NOT to store via memory_add:**
 - Full conversations (use `conversation_create` + `conversation_add_message`)
-- Large documents (use the UI's Datapack → Actions → Add Knowledge upload flow)
+- Large documents (use `knowledgebase_upload_document`, or the UI's Datapack → Actions → Add Knowledge upload flow)
 
 **Common errors:**
 - `syntax error at or near "-"` — legacy error from the pre-multi-tenancy schema when `agent_id` became part of a PostgreSQL identifier. No longer applies on Cloud (agent_id is a TEXT column value, any string is accepted). If you hit it on a deployment that still uses the old schema, use underscores instead of hyphens.
@@ -268,7 +268,7 @@ conversation_delete(conversation_id="conv-uuid-123", agent_id="agent")
 
 ## Knowledge Base Tools
 
-**KB ingestion is a UI-only activity.** Users upload files via the datapack's Actions → **Add Knowledge** dialog (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). MCP exposes two KB tools: `knowledgebase_search`, and `knowledgebase_delete_document` for removing a single uploaded file.
+Agents upload files via `knowledgebase_upload_document` and poll `knowledgebase_document_status` for indexing progress; a human uploading through the Cloud UI still uses the datapack's Actions → **Add Knowledge** dialog (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch) — both paths feed the same index. `knowledgebase_search` queries whatever the KB currently holds. MCP also exposes `knowledgebase_delete_document` for removing a single uploaded file.
 
 See `tools-rag-workflow.md` for the decision table.
 
@@ -306,6 +306,166 @@ knowledgebase_delete_document(document_id="<uuid from a search hit>",
 ```
 
 Returns `{"document_id", "chunks_deleted", "s3_deleted"}` — if `s3_deleted` is `false`, say so: the index entries are gone but the stored file may remain. Errors include a numeric `status`: `403` means the user is not the datapack owner, a maintainer, or the file's uploader — report it, don't retry; `409` (`DOCUMENT_PROCESSING`) means the file is still being indexed — wait for indexing to finish, then retry.
+
+### knowledgebase_upload_document
+
+**When to use:** Get a file's bytes into the datapack's KB for later `knowledgebase_search` retrieval — a file already on disk, or one generated mid-conversation. This tool never touches the file's bytes itself — it only requests a presigned S3 URL (api_server's `pending_uploads` watcher records it and reconciles the object once it lands, with no separate confirm call needed). **The caller POSTs the file to the returned `url` directly** — multipart/form-data, every key in `fields` as a form field (in order), then the file's bytes last as a field named `"file"`.
+
+**Do this immediately after the tool call returns, in the same turn — don't wait to be asked.** The upload is only half-done once you have `url`/`fields`; nothing else completes it for you.
+
+**`content_hash` and `content_head_base64` are both computed on the caller's own device, from the file's real bytes — this tool never computes either for you.** `content_head_base64` is compulsory: the tool refuses with `content_head_base64_required` if it's missing or blank, so there's no path that skips the sniff.
+
+Linux:
+```bash
+CONTENT_HASH=$(sha256sum report.pdf | cut -d' ' -f1)
+CONTENT_HEAD_B64=$(head -c 3072 report.pdf | base64 -w0)
+```
+
+macOS (no `sha256sum` by default — use `shasum`; BSD `base64` has no `-w0`, so strip newlines with `tr` instead):
+```bash
+CONTENT_HASH=$(shasum -a 256 report.pdf | cut -d' ' -f1)
+CONTENT_HEAD_B64=$(head -c 3072 report.pdf | base64 | tr -d '\n')
+```
+
+Windows PowerShell:
+```powershell
+$ContentHash = (Get-FileHash -Algorithm SHA256 -Path "report.pdf").Hash.ToLower()
+$bytes = [System.IO.File]::ReadAllBytes("report.pdf")
+$head = $bytes[0..([Math]::Min(3071, $bytes.Length - 1))]
+$ContentHeadB64 = [Convert]::ToBase64String($head)
+```
+
+Windows cmd.exe (`certutil` ships built in for the hash — prints it on its own line, strip the header/footer lines before use; cmd.exe has **no** built-in way to take just the first 3072 bytes *and* base64-encode them in one step, so use the PowerShell or Python snippet for `content_head_base64` even in a cmd.exe-driven workflow):
+```bat
+certutil -hashfile report.pdf SHA256
+```
+
+Python (cross-platform; streams the file so a large one isn't fully loaded into memory, and reuses the same read to build `content_head_base64` too):
+```python
+import hashlib, base64
+
+h = hashlib.sha256()
+with open(LOCAL_PATH, "rb") as f:
+    head = f.read(3072)                      # also the content_head_base64 sample
+    h.update(head)
+    for chunk in iter(lambda: f.read(1 << 20), b""):
+        h.update(chunk)
+
+content_hash = h.hexdigest()
+content_head_base64 = base64.b64encode(head).decode()
+```
+
+**Then, after the tool call returns `{url, fields}` — a portable snippet (identical on Linux/macOS/Windows, needs `python3` + `requests`), because it loops over whatever `fields` came back instead of hand-enumerating field names, so it can't drift out of sync with what the response actually contains:**
+
+```python
+import json, requests
+resp = json.loads(RESPONSE_JSON)        # the tool's raw JSON string
+if not resp.get("already_uploaded"):
+    with open(LOCAL_PATH, "rb") as f:
+        r = requests.post(resp["url"], data=resp["fields"], files={"file": (FILENAME, f)})
+        r.raise_for_status()
+```
+
+**Linux/macOS, curl (needs `jq`; builds the `-F` flags dynamically from whatever `fields` actually contains — a signer using temporary credentials adds `x-amz-security-token`, and extra policy conditions add their own fields, so a hardcoded field list drops them and S3 answers 403 on a form missing a signed field):**
+
+```bash
+FIELDS=()
+while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    FIELDS+=(-F "${key}=${value}")
+done < <(echo "$RESPONSE_JSON" | jq -j '.fields | to_entries[] | (.key, "\u0000", .value, "\u0000")')
+curl -sS "${FIELDS[@]}" -F file=@/local/path/report.pdf "$URL"
+```
+
+**Windows PowerShell 7+ (`Invoke-RestMethod -Form` takes the whole `fields` object as a hashtable — no per-field enumeration needed at all; use `[ordered]@{}`, not a plain `@{}`, since S3 requires `file` to be the *last* form field and a plain hashtable has no guaranteed enumeration order):**
+
+```powershell
+$resp = $json | ConvertFrom-Json
+if (-not $resp.already_uploaded) {
+    $form = [ordered]@{}
+    $resp.fields.PSObject.Properties | ForEach-Object { $form[$_.Name] = $_.Value }
+    $form["file"] = Get-Item "C:\path\to\report.pdf"
+    Invoke-RestMethod -Uri $resp.url -Method Post -Form $form
+}
+```
+
+**Windows cmd.exe:** cmd.exe has no built-in JSON parsing, so there's no safe way to build the `-F` flags dynamically from whatever `fields` contains without an extra tool. Rather than hardcode a field list that silently drops fields (e.g. `x-amz-security-token` on temporary credentials, or extra policy conditions) and fail with a confusing S3 403, use the PowerShell or Python snippet above even from a cmd.exe-driven workflow.
+
+`size` must be the file's exact length in bytes, and the URL only accepts a body of exactly that size and SHA-256, for 5 minutes. Accepted extensions: pdf, txt, text, md, json, csv, xml, html, htm. `content_head_base64` — the file's first 3072 bytes (api_server's sniff length), or the whole file if shorter, base64-encoded — is **required**: the tool sniffs it against the extension before requesting the URL and rejects an obvious mismatch (e.g. a renamed file) at once as `VALIDATION_ERROR`; a missing or blank one is `content_head_base64_required`. Text files must be UTF-8, because indexing reads UTF-8 only: a Latin-1 or Excel "CSV (Windows)" file is refused with a message to save it as UTF-8 (Excel: "CSV UTF-8"). Samples up to 4096 bytes are accepted and trimmed, so older snippets that send 4096 still work. A mismatch api_server catches on its own surfaces later as `state: "abandoned"` from `knowledgebase_document_status`. Idempotent — uploading the same content twice (by SHA-256) returns `already_uploaded: true` with an empty `url` and no `fields`; if that file's indexing never started or failed, the repeat queues it again.
+
+```
+knowledgebase_upload_document(
+    filename="report.pdf",
+    size=42000,
+    content_hash="<sha256 hex of the file's bytes>",
+    conversation_id="<uuid from conversation_create>",
+    content_head_base64="<base64 of the file's first 3072 bytes>",
+    agent_id="claude_desktop",
+)
+```
+
+**Response (fresh upload):**
+```json
+{
+  "datapack_id": "...",
+  "url": "https://<bucket>.s3.amazonaws.com/",
+  "fields": {"key": "...", "policy": "...", "...": "..."},
+  "key": "user/datapack/hash/report.pdf",
+  "already_uploaded": false
+}
+```
+
+**Response (identical content already uploaded):**
+```json
+{
+  "datapack_id": "...",
+  "url": "",
+  "key": "user/datapack/hash/report.pdf",
+  "already_uploaded": true,
+  "existing_filename": "report.pdf"
+}
+```
+
+After a fresh upload, POST the file to `url` yourself (see above), then save `key` (as `document_key`) and poll `knowledgebase_document_status` until `state` is terminal. S3 answers a successful POST with `204`. `400 EntityTooSmall` or `EntityTooLarge` means `size` wasn't the file's exact byte count: call the tool again with the right size and upload through the new URL. The earlier URL can never succeed (it only accepts the wrong size) and expires on its own within 5 minutes.
+
+**Common errors:**
+- `conversation_id_required` — `conversation_id` was missing or blank.
+- `datapack_id_required` — no `datapack_id` was given and no tenant default could be resolved.
+- `content_head_base64_required` — `content_head_base64` was missing or blank. Checked after the `filename`/`size`/`content_hash` `VALIDATION_ERROR` checks, but always before a URL is requested — there is no way to skip it.
+- `VALIDATION_ERROR` — missing filename, unsupported extension, missing/malformed `content_hash`, size ≤ 0, invalid or oversized `content_head_base64`, a sample shorter than `min(size, 3072)` bytes or longer than `size` (so `size` is wrong), or the sampled content doesn't match its extension.
+- `FREE_TIER_KB_STORAGE_LIMIT` / `STANDARD_TIER_KB_STORAGE_LIMIT` (`status` 402) — no room left in the storage quota. Tell the user to free space or upgrade instead of retrying: every issued URL holds its `size` against the quota until the file is registered, or for up to 15 minutes if it is never uploaded.
+
+Every error from api_server also carries `status`, its HTTP status code.
+- `knowledgebase_upload_document_failed` — unexpected error (see `detail`).
+- The actual S3 POST isn't made through this tool, so its own failures (e.g. the body exceeding the cap the URL was signed under) surface to whatever made that call directly, not from this tool.
+
+---
+
+### knowledgebase_document_status
+
+**When to use:** Track a file uploaded via `knowledgebase_upload_document` from "waiting for bytes" through to indexed.
+
+```
+knowledgebase_document_status(
+    document_key="user/datapack/hash/report.pdf",
+    conversation_id="<uuid from conversation_create>",
+    agent_id="claude_desktop"
+)
+```
+
+**Response (still indexing):**
+```json
+{
+  "document_key": "user/datapack/hash/report.pdf",
+  "filename": "report.pdf",
+  "state": "indexing",
+  "message": "The file is registered and being indexed.",
+  "document": {"status": "PROCESSING", "chunks_processed": 3}
+}
+```
+
+Poll until `state` is `completed` or `failed` (or the pre-registration terminals `abandoned`/`oversized`). `NOT_FOUND` means `document_key` is unknown to this datapack — check it was copied verbatim from the upload response. `datapack_id_required` means no `datapack_id` was given and no tenant default could be resolved.
+
+---
 
 ## Artifact Tools
 
@@ -410,6 +570,7 @@ handful of datapacks. For an account that can see more than 1000 datapacks
 instead; switch to `datapack_search`. If the server has no `datapack_search`
 tool (an older server), use `datapack_list`.
 
+
 `datapack_describe` returns these counts:
 
 | Field | Meaning |
@@ -442,4 +603,4 @@ Agent and KB lifecycle does not ship as MCP tools. If the user asks to create/li
 - REST: `POST/GET/DELETE /datapacks/:datapack_id/agents` (agents), `POST/GET/DELETE /datapacks/:datapack_id/knowledge-bases` (KB sources).
 - Or the Meko Cloud UI at `cloud.mekodata.ai` → Datapacks → agents / knowledge-bases.
 
-KB ingestion specifically lives in the UI today: Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5 MB each, 10/batch). Agents querying a populated index use `knowledgebase_search`, and can remove a single uploaded file with `knowledgebase_delete_document` — see `tools-rag-workflow.md`.
+Uploading a *file* into an existing KB is not part of that lifecycle restriction — use `knowledgebase_upload_document` (see above) rather than the UI for anything driven from MCP. Agents querying a populated index use `knowledgebase_search`, and can remove a single uploaded file with `knowledgebase_delete_document` — see `tools-rag-workflow.md`.

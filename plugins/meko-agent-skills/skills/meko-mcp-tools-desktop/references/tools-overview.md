@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Complete Tool Catalog and Decision Tree
 
-**26 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Retrieval (1), Memory (8), Conversation (6), Knowledge Base (2), Datapack (6), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
+**28 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Retrieval (1), Memory (8), Conversation (6), Knowledge Base (4), Datapack (6), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
 
 ## Quick health check before using tools
 
@@ -30,7 +30,8 @@ User wants to...
 ├── Ask "what do you know about X?" --------> context_search (read; memory + KB + past conversations in one call)
 ├── Search personal context? ---------------> memory_search (read)
 ├── Search shared datapack knowledge? ------> knowledgebase_search (read)
-├── Add documents to a knowledge base? -----> point user at Meko UI: Datapack → Actions → Add Knowledge
+├── Add a file to a knowledge base? --------> knowledgebase_upload_document (write)
+│   └── Check its indexing progress? -------> knowledgebase_document_status (read)
 ├── Delete ONE knowledge-base file? --------> knowledgebase_delete_document (destructive — confirm with the user first)
 ├── Store or recall information?
 │   ├── Store a fact/preference/entity? -----------> memory_add (write)
@@ -46,7 +47,7 @@ User wants to...
     └── CRUD datapack? --------------------> datapack_create/list/describe/update/delete
 ```
 
-Agent lifecycle and KB **ingestion / index lifecycle** (adding sources, uploads, re-indexing) are managed outside the MCP surface — typically in the Meko control-plane UI. Deleting a single KB file IS exposed here (`knowledgebase_delete_document`).
+Agent lifecycle and KB **index / source lifecycle** (creating indexes, adding sources, re-indexing) are managed outside the MCP surface — typically in the Meko control-plane UI. Single KB files are handled here: adding one (`knowledgebase_upload_document`, then `knowledgebase_document_status`) and deleting one (`knowledgebase_delete_document`).
 
 ## Retrieval Tools (1)
 
@@ -54,12 +55,14 @@ Agent lifecycle and KB **ingestion / index lifecycle** (adding sources, uploads,
 |------|---------|
 | `context_search(query, conversation_id, agent_id=None, datapack_id=None, limit=10, force_source="auto")` | Default first call for open-ended recall. Queries memory, the knowledge base, and the conversation-history cache in parallel and returns each source in its own bucket: `{"results": {"memory": [...], "knowledge_base": [...], "conversation": {"hits": [...], "thread": [...]}}, "token_savings": {...}}`. A bucket is `null` only when that source wasn't queried: `force_source` excluded it, or the server couldn't build a query vector for it. An empty bucket is ambiguous: either that source found nothing relevant, or it failed. `context_search` turns a failed source into an empty list and records the error only in the trace. Before you tell the user nothing is stored about X, confirm with `memory_search` or `knowledgebase_search`, which return errors. `force_source` is `"auto"` (all three), `"memory"`, `"knowledge_base"`, or `"conversation"`; any other value returns `invalid_force_source`. `limit` bounds the memory and KB buckets only; the conversation bucket returns up to 10 hits plus a thread of whole turns. The conversation bucket is datapack-wide. It returns embedded turns from every user and agent on the datapack, and each hit carries its author's `user_id`. Don't present a hit as this user's own history. |
 
-## Knowledge Base Tools (2)
+## Knowledge Base Tools (4)
 
 | Tool | Purpose |
 |------|---------|
 | `knowledgebase_search(query, conversation_id, datapack_id, agent_id=None, limit=10)` | Hybrid (semantic + keyword) search across KB chunks and promoted memories. `datapack_id` is REQUIRED (no default). Each hit has `id`, `chunk_text`, `document_id`, `metadata_filters`, `distance`, and `match_type` (`semantic`, `keyword`, or `hybrid`). |
 | `knowledgebase_delete_document(document_id, conversation_id, datapack_id="")` | Permanently delete ONE KB file (chunks + metadata; stored-file delete is best-effort — check `s3_deleted`). Irreversible: confirm with the user first. `document_id` comes from `knowledgebase_search` hits (no filename in hits — echo the id + chunk text). Owner/maintainer/uploader only (status 403 otherwise); status 409 while still indexing — wait and retry. |
+| `knowledgebase_upload_document(filename, size, content_hash, conversation_id, content_head_base64, datapack_id=None, agent_id=None)` | Requests a presigned S3 URL for a file (does not upload bytes itself — the caller POSTs to the returned `url`/`fields`). Returns `{datapack_id, url, fields, key, already_uploaded}` (fresh upload) or `{datapack_id, url: "", key, already_uploaded: true, existing_filename}` (dedup). Accepted extensions: pdf/txt/text/md/json/csv/xml/html/htm; `content_head_base64` (base64 of the file's first 3072 bytes, or the whole file if shorter) is **required** and is always sniffed against the extension before requesting the URL — a missing/blank value is rejected as `content_head_base64_required`, this check cannot be skipped. Idempotent by content hash. |
+| `knowledgebase_document_status(document_key, conversation_id, datapack_id=None, agent_id=None)` | Poll indexing progress for a file uploaded via `knowledgebase_upload_document`, using its returned `key` (passed here as `document_key`). `state` is one of `awaiting_upload`/`indexing` (non-terminal) or `completed`/`failed`/`abandoned`/`oversized` (terminal). |
 
 ## Memory Tools (8)
 
@@ -126,7 +129,7 @@ Some things the Meko platform can do are not wired into the MCP tool surface tod
 
 The MCP-exposed `datapack_create` / `datapack_search` / `datapack_list` / `datapack_describe` / `datapack_update` / `datapack_delete` tools above are a deliberate subset — the common CRUD that an agent reasonably needs mid-conversation. Anything involving agent or KB lifecycle is control-plane territory.
 
-For knowledge-base content on Cloud, the canonical path is **UI upload**: Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/MP4, 5MB each, 10/batch). `knowledgebase_search` queries the resulting index from MCP.
+For a file already on disk or generated mid-conversation, requesting a URL with `knowledgebase_upload_document` and POSTing to it gets it into the KB without leaving MCP for a human's help. The UI upload path (Datapack → Actions → **Add Knowledge**, PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch) remains the way for a human to add files directly. `knowledgebase_search` queries the resulting index either way.
 
 ## Common Parameter Patterns
 

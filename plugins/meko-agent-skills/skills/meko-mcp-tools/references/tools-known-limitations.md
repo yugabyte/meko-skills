@@ -26,7 +26,7 @@ These are current limitations of the Meko MCP tools. Know them upfront to avoid 
 | Standard | 5,000 | 5,000 | 30,000 |
 | Pro / Enterprise | uncapped | uncapped | uncapped |
 
-The Free tier also caps `context_search` and `conversation_add_message` at 1,000 calls each. Embedding turns into the conversation-search cache has its own cap (2,000 turns on Free, 10,000 on Pro). When that cap is reached, `conversation_add_message` still stores the turn and reports `conversation_search_skipped: "quota_exceeded"`; the turn just won't appear in `context_search`'s conversation bucket.
+The Free tier also caps `context_search` and `conversation_add_message` at 1,000 calls each. Embedding turns into the conversation-search cache has its own cap: 2,000 turns on Free and 10,000 on Pro; Standard and Enterprise are uncapped. When that cap is reached, `conversation_add_message` still stores the turn and reports `conversation_search_skipped: "quota_exceeded"`; the turn just won't appear in `context_search`'s conversation bucket.
 
 A quota error can arrive with HTTP 403. It is not an authentication failure; don't reconfigure credentials because of it.
 
@@ -50,6 +50,10 @@ One call returns roughly the **20 most recent rows**; the response's `total` rep
 
 `memory_search` and `memory_get_all` return every agent's rows for the user. `memory_delete_all` deletes only rows in the `agent_id` you pass, and an omitted `agent_id` means the `meko_agent` bucket. A `memory_search(run_id=X)` preview can therefore list rows that `memory_delete_all(run_id=X)` leaves in place. To clear rows written by several agents, delete them by id with `memory_delete_by_id`, or call `memory_delete_all` once per `agent_id` shown in the preview.
 
+## Viewers can read but not write
+
+On a datapack shared with you as a viewer, every conversation and memory write returns `read_only_access` and writes nothing: `conversation_create`, `conversation_add_message`, `conversation_update`, `memory_add`, `memory_update`, `memory_promote`, `artifact_put`, and `track_token_usage`. You can still delete your own memories with `memory_delete_by_id` and `memory_delete_all`, and delete a conversation you started. Searches work as for any other role. `context_search` covers every member's conversations, but for a viewer its conversation results and `conversation_get` return `user_id: null`, so they don't say who wrote a turn. Automatic capture holds a viewer's session and reports `read_only_access` at the next session start.
+
 ## Promoted memories are read-only through MCP
 
 `memory_update` and `memory_delete_by_id` return `memory_is_promoted` for a memory that has been promoted to shared knowledge. Edit or remove promoted content in the Cloud UI Learnings tab.
@@ -66,9 +70,11 @@ The one exception is a single uploaded **file**: `knowledgebase_delete_document`
 
 **Workaround:** For stuck or failed indexes, create a new index with a different name. Stale indexes remain in the database until manually cleaned up by an admin.
 
-## RAG ingestion is UI-only
+## KB index/source management is UI-only
 
-KB ingestion (creating an index, adding sources, polling build status) is not exposed via MCP. Documents go in through the Cloud UI's **Add Knowledge** flow (Datapack → Actions → Add Knowledge) — PDF/TXT/MD/JSON/MP4 up to 5 MB each, 10 per batch.
+Manually creating a vector index, adding a source to an existing one, or polling raw build status is not exposed via MCP — `knowledgebase_trigger_index_creation`, `knowledgebase_add_source_to_index`, and `knowledgebase_check_index_status` are implemented but deliberately not registered. Use the Cloud UI for those (Datapack → Actions → Add Knowledge).
+
+**Adding a file** is a registered MCP tool: call `knowledgebase_upload_document` directly (accepted extensions PDF/TXT/MD/JSON/CSV/XML/HTML, up to 5 MB Free / 50 MB Standard / 60 MB Pro+ per file) to get a presigned URL, then POST the bytes to it yourself — api_server's background watcher registers and indexes the object once it lands, so no separate index-management call is needed. The Cloud UI's **Add Knowledge** flow (10 files per batch) remains the human-facing path for the same upload.
 
 To **query** a built index, use `knowledgebase_search` — it returns both uploaded documents and memories the user promoted from the Learnings tab.
 
@@ -84,7 +90,7 @@ It works **poorly** for:
 - Data dictionaries — only partial information extracted
 - Structured schemas — relationships between fields lost
 
-**Structured data is not natively supported via MCP.** The options are:
+**Don't store structured data as memories.** The options are:
 
 1. **Write a single narrative summary** as a memory — one call, not row-by-row:
    ```
@@ -93,8 +99,7 @@ It works **poorly** for:
        conversation_id="<session conversation_id>",
        text="Customer Complaints dataset has fields: Complaint ID (int PK), Date Submitted (date), Product (text, e.g. Mortgage/Credit Card), Sub-product (text), Issue (text), Company Response (text), State (text, 2-letter code), ZIP Code (text)")
    ```
-2. **Upload the schema doc** through the Cloud UI's **Add Knowledge** flow (Datapack → Actions → Add Knowledge). Accepts PDF/TXT/MD/JSON — convert CSV to MD or JSON first. That makes it queryable via `knowledgebase_search`.
-3. **Tell the user** that structured-data storage via MCP isn't supported and let them decide how to proceed.
+2. **Upload the file itself to the knowledge base** with `knowledgebase_upload_document` — `.csv`, `.json` and the other accepted types go in as they are — and query it with `knowledgebase_search`. (The Cloud UI's **Add Knowledge** flow does the same for a person.)
 
 Never ingest CSV row-by-row into memory — each row becomes a fragmented fact with lost context.
 

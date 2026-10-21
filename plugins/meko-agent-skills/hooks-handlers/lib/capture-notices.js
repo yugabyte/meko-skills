@@ -18,6 +18,8 @@
 "use strict";
 
 const {
+  autofixEnabled,
+  autofixIntervalSeconds,
   computeAggregateHealth,
   readHealthCache,
   scanCompleteForDropClamp,
@@ -105,6 +107,92 @@ function statuslineSuffixFromHealth(health) {
         ? "degraded"
         : "catching_up";
   return `capture:${short}(${queued})`;
+}
+
+const NEEDS_YOU_LABELS = {
+  auth: "API key",
+  account_limit: "plan limit",
+  datapack: "datapack access",
+  forbidden: "access",
+};
+
+/**
+ * Claude Code status bar text for capture, or "" when there is nothing to
+ * show. Built when the health cache is written and read by
+ * meko-statusline.sh. `autofix` is the last `--capture-cleanup fix` summary
+ * (autofix-last.json). Uses a clock time for the next automatic fix, so the
+ * text stays right between cache writes.
+ *
+ * @param {object} health
+ * @param {object|null} autofix
+ * @param {number} [nowMs]
+ * @returns {string}
+ */
+function statuslineText(health, autofix, nowMs) {
+  return statuslineFields(health, autofix, nowMs).statusline;
+}
+
+/**
+ * statuslineText plus when it stops being true: `statusline_until` (epoch
+ * seconds) and the text to show after that, `statusline_after`. The
+ * status bar compares them with the clock, so "auto-fixed N" disappears after
+ * an hour and "auto-fix at 14:30" turns into "auto-fix soon" at 14:30, even
+ * when nothing rewrites the cache.
+ */
+function statuslineFields(health, autofix, nowMs) {
+  const until = (ms, after) => ({ statusline_until: Math.floor(ms / 1000), statusline_after: after });
+  const h = health && typeof health === "object" ? health : {};
+  const status = h.status || "healthy";
+  const now = nowMs != null ? nowMs : Date.now();
+  const a = autofix && typeof autofix === "object" ? autofix : null;
+  const sessions = Array.isArray(h.sessions) ? h.sessions : [];
+  const queued = Number(h.queued_exchanges || 0);
+  const stopped = sessions.filter((x) => x && x.parked_reason === "stop");
+  const parkedByFix = sessions.filter((x) => x && x.parked_reason && x.parked_reason !== "stop");
+  const stuck = sessions.filter((x) => x && x.status !== "healthy" && !x.parked_reason);
+
+  // A run that never finished (its timer was killed) leaves a placeholder;
+  // once it is older than any run can take, its needs_you list is stale.
+  const ranAtMs = a ? Date.parse(a.ran_at) : NaN;
+  const abandoned = Boolean(a && a.running && (!Number.isFinite(ranAtMs) || now - ranAtMs > 30 * 60 * 1000));
+  const needs = a && !abandoned && Array.isArray(a.needs_you) ? a.needs_you : [];
+  if (needs.length && (parkedByFix.length || stuck.length)) {
+    const labels = [...new Set(needs.map((n) => NEEDS_YOU_LABELS[n.cause] || n.cause))];
+    return { statusline: `capture: needs you (${labels.join(", ")})` };
+  }
+
+  if (status === "healthy") {
+    const fixed = a && a.counts ? Number(a.counts.fixed || 0) : 0;
+    const ranAt = a ? Date.parse(a.ran_at) : NaN;
+    if (a && a.mode === "auto" && fixed > 0 && Number.isFinite(ranAt) && now - ranAt < 3600 * 1000) {
+      return { statusline: `capture: auto-fixed ${fixed}`, ...until(ranAt + 3600 * 1000, "") };
+    }
+    return { statusline: "" };
+  }
+
+  const q = `${queued} queued`;
+  if (!stuck.length && !parkedByFix.length && stopped.length) {
+    return { statusline: `capture: paused (${q})` };
+  }
+
+  let next = "";
+  let due = null;
+  if (autofixEnabled()) {
+    const ranAt = a ? Date.parse(a.ran_at) : NaN;
+    due = (Number.isFinite(ranAt) ? ranAt : now) + autofixIntervalSeconds() * 1000;
+    next =
+      due <= now
+        ? ", auto-fix soon"
+        : `, auto-fix at ${new Date(due).toTimeString().slice(0, 5)}`;
+  }
+  const label =
+    status === "degraded_retrying" ? "retrying" : status === "blocked_action_required" ? "blocked" : null;
+  if (!label) return { statusline: `capture: sending ${queued}` };
+  const text = `capture: ${label} (${q})${next}`;
+  if (due != null && due > now) {
+    return { statusline: text, ...until(due, `capture: ${label} (${q}), auto-fix soon`) };
+  }
+  return { statusline: text };
 }
 
 /**
@@ -236,7 +324,8 @@ function buildHealthNotice({ health, previousStatus, previousDropped } = {}) {
         : "catching_up";
 
   const cleanupHint = retriesRunning(h)
-    ? " If the user wants the retries to stop, offer " +
+    ? " To repair it, offer `npx @yugabytedb/meko-mcp@latest " +
+      "--capture-cleanup fix`. To only stop the retries, offer " +
       "`npx @yugabytedb/meko-mcp@latest --capture-cleanup stop`; it parks " +
       "the backlog without deleting it."
     : "";
@@ -429,6 +518,8 @@ module.exports = {
   affectedSessionCount,
   reasonForHealth,
   statuslineSuffixFromHealth,
+  statuslineText,
+  statuslineFields,
   buildHealthNotice,
   injectHealthNotice,
   formatCaptureStatusText,
