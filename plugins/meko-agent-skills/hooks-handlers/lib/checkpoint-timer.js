@@ -387,7 +387,9 @@ function refreshStartupPersistentQueue(scan, forcePersistentRetry) {
  * Returns true if more recoverable work may remain for a later cycle.
  */
 async function runRecoveryCycle() {
-  if (recoveryInFlight) return workRemains;
+  // Once cleanup() starts, start no new capture.js child: it would outlive
+  // this timer's exit.
+  if (recoveryInFlight || exiting) return workRemains;
   recoveryInFlight = true;
   const forcePersistentRetry = startupRecoveryPending;
   let moreWork = false;
@@ -549,7 +551,7 @@ function ownRetryDue(nowMs) {
 }
 
 function retryOwnSession() {
-  if (tickInFlight || recoveryInFlight || ownRetryInFlight) {
+  if (exiting || tickInFlight || recoveryInFlight || ownRetryInFlight) {
     return Promise.resolve();
   }
   ownRetryInFlight = runOwnRetry().finally(() => {
@@ -575,7 +577,7 @@ async function runOwnRetry() {
 }
 
 async function tick() {
-  if (tickInFlight) return;
+  if (tickInFlight || exiting) return;
   tickInFlight = true;
   try {
     // Never run two checkpoints of this session at once.
@@ -898,7 +900,7 @@ setInterval(() => {
 // waiting for the full checkpoint interval (self-draining). The same loop
 // retries this daemon's own session once its next_retry_at passes.
 setInterval(() => {
-  if (recoveryInFlight || tickInFlight || ownRetryInFlight) return;
+  if (exiting || recoveryInFlight || tickInFlight || ownRetryInFlight) return;
   if (ownRetryDue(Date.now())) {
     retryOwnSession().catch((err) => {
       process.stderr.write(`[meko-timer] Own-session retry failed: ${err.message}\n`);

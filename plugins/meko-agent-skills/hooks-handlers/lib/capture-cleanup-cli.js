@@ -914,13 +914,19 @@ function actionStop(opts) {
   // another directory's run.
   if (procs.ok && opts.sessions.length === 0) {
     let lockPid = NaN;
+    let runPid = NaN;
     try {
-      lockPid = Number(JSON.parse(fs.readFileSync(path.join(cs.watermarkDir(), "autofix.lock"), "utf8")).pid);
+      const lock = JSON.parse(fs.readFileSync(path.join(cs.watermarkDir(), "autofix.lock"), "utf8"));
+      lockPid = Number(lock.pid);
+      runPid = Number(lock.run_pid);
     } catch {
       lockPid = NaN;
+      runPid = NaN;
     }
+    // A run outlives a timer that was killed, and is then reparented, so
+    // also match the run's own PID from the lock.
     for (const p of procs.processes) {
-      if (p.kind === "autofix_run" && p.ppid === lockPid && !targets.includes(p)) targets.push(p);
+      if (p.kind === "autofix_run" && (p.ppid === lockPid || p.pid === runPid) && !targets.includes(p)) targets.push(p);
     }
   }
   // Stopping the automatic run's wrapper doesn't stop the capture.js child it
@@ -1011,6 +1017,11 @@ function actionResume(opts) {
 function drainOneSession(e, opts, ctx, options) {
   const sid = e.session_id;
   const log = ctx.log;
+  // freshEntry() returns no state when the watermark can't be read; report
+  // that session as failed instead of throwing and ending the whole run.
+  if (!e.ok || !e.state) {
+    return { result: { session_id: sid, outcome: "failed", reason: e.error || "could not read the session state" }, stop: false };
+  }
   {
     // A caller that already changed the state (a move ends the park) passes
     // whether the session was parked before, so "a parked session stays
@@ -2069,6 +2080,7 @@ function run(argv, io) {
 module.exports = {
   parseArgs,
   run,
+  drainOneSession,
   diagnose,
   hasPendingWork,
   hasStaleFailure,

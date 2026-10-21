@@ -2431,7 +2431,7 @@ function buildSessionStartFallbackContext(agentId, opts) {
   // act on.
   const reason = opts && opts.reason;
   const preamble = reason === "datapack_required"
-    ? "The SessionStart hook reached the Meko MCP server, but no datapack is pinned for this project, so the server declined to create a conversation. **Automatic conversation capture is idle**. Use `datapack_search(query=...)` to find a datapack id, then invoke the `meko-select-datapack` skill (or your client's equivalent) to pin it. The next drain picks up the fresh pin and starts capturing this session's queued turns; until then, save facts explicitly."
+    ? "The SessionStart hook reached the Meko MCP server, but no datapack is pinned for this project, so the server declined to create a conversation. **Automatic conversation capture is idle**. Use `datapack_search(query=...)` (or `datapack_list` on a server without it) to find a datapack id, then invoke the `meko-select-datapack` skill (or your client's equivalent) to pin it. The next drain picks up the fresh pin and starts capturing this session's queued turns; until then, save facts explicitly."
     : "The SessionStart hook could not reach the Meko MCP server to create a conversation. **Automatic conversation capture is NOT running this session**, so the server-side extraction that normally saves memories for you will not fire. Fall back to saving facts explicitly.";
   return `## Meko Memory Instructions
 
@@ -2758,7 +2758,7 @@ async function handleSessionStart(hookInput) {
     const isDatapackRequired = err && err.code === "datapack_id_required";
     if (isDatapackRequired) {
       process.stderr.write(
-        `[meko-capture] SessionStart: no datapack pinned; auto-capture is idle. Pin one with datapack_search + meko-select-datapack; the next drain picks up the fresh pin.\n`,
+        `[meko-capture] SessionStart: no datapack pinned; auto-capture is idle. Pin one with datapack_search (or datapack_list) + meko-select-datapack; the next drain picks up the fresh pin.\n`,
       );
     } else if (err && err.isMcpToolError) {
       // Server accepted the call and returned a structured error (e.g.
