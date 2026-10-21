@@ -1,4 +1,18 @@
 #!/usr/bin/env node
+/*
+ * Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
+ * See the NOTICE file distributed with this work for additional information
+ * regarding copyright ownership. YugabyteDB licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed
+ * under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ */
 /**
  * capture-cleanup-cli.js: inspect and clean up stuck conversation capture.
  *
@@ -1578,7 +1592,7 @@ function writeFixSummary(opts, results, stopped, error) {
     }
     if (o === "paused_by_user") counts.paused++;
     if (o.includes("failed")) counts.failed++;
-    if (o === "not_attempted" || o === "busy") counts.not_attempted++;
+    if (o === "not_attempted" || o === "busy" || o === "move_deferred") counts.not_attempted++;
     if (o.startsWith("partly_drained")) counts.partial++;
   }
   try {
@@ -1703,6 +1717,15 @@ function actionFix(opts, log) {
 
     let run;
     const wasParkedBefore = isParked(e.state);
+    // SessionStart gave a live session's agent its conversation_id, and a
+    // move can't tell the agent the new one, so its tool calls would stay on
+    // the old conversation while captured turns go to the new one. Wait until
+    // the session ends; a later fix moves it.
+    const deferMove = looksLive(e.state, transcriptInfo(e.state), ctx.nowMs);
+    if (d.action === "move" && deferMove) {
+      results.push({ ...base, outcome: "move_deferred", reason: "the session is still open; fix moves it to a new conversation after the session ends" });
+      continue;
+    }
     if (d.action === "move") {
       run = moveThenDrain(e, opts, ctx, wasParkedBefore);
     } else {
@@ -1722,7 +1745,10 @@ function actionFix(opts, log) {
         const now = freshEntry(sid);
         const sameConversation = now.ok && now.state.conversation_id === diagnosedConversation;
         const guarded = now.ok && Boolean(now.state.recovered_from_conversation_id);
-        if (sameConversation && !guarded) {
+        if (sameConversation && !guarded && deferMove) {
+          log(`  ${sid.slice(0, 8)}: ${String(err).slice(0, 80)}; the session is still open, so the move waits until it ends`);
+          run = { ...run, result: { ...run.result, move_deferred: true } };
+        } else if (sameConversation && !guarded) {
           log(`  ${sid.slice(0, 8)}: ${String(err).slice(0, 80)}; moving to a new conversation`);
           // The failed drain just re-parked the session; keep its status
           // from before fix ran.
