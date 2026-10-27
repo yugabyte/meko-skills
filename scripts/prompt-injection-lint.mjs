@@ -31,6 +31,10 @@ const ALLOWED_HOSTS = new Set([
   // Meko Cloud console, where users sign up and copy datapack IDs. Linked from
   // the Kiro power's README and INSTRUCTIONS.md.
   "cloud.mekodata.ai",
+  // The pre-call reachability check before knowledgebase_upload_document: the
+  // presigned bucket host isn't known until the URL is issued, so the skills
+  // probe S3's global endpoint instead, discarding the response.
+  "s3.amazonaws.com",
   // Agent Plugins specification, the format the Kiro power follows.
   "agent-plugins.org",
   "yugabyte.com",

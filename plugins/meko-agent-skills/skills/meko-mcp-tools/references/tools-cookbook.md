@@ -310,7 +310,7 @@ Returns `{"document_id", "chunks_deleted", "s3_deleted"}` — if `s3_deleted` is
 
 ### knowledgebase_upload_document
 
-**When to use:** Get a file's bytes into the datapack's KB for later `knowledgebase_search` retrieval — a file already on disk, or one generated mid-conversation. This tool never touches the file's bytes itself; it only requests a presigned S3 URL. Meko registers the file once it lands, so there's no separate confirm call. **The caller POSTs the file to the returned `url` directly** — multipart/form-data, every key in `fields` as a form field (in order), then the file's bytes last as a field named `"file"`.
+**When to use:** Get a file's bytes into the datapack's KB for later `knowledgebase_search` retrieval — a file already on disk, or one generated mid-conversation. Use it when the content should be searchable by meaning; to keep a file exactly as-is and fetch it back whole, use `artifact_put`. Before calling it, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com` (any HTTP status means yes; a connection, DNS or proxy error means no); a sandboxed session may have the file but no outbound network. If the check fails, don't call it — point the user at the UI. This tool never touches the file's bytes itself; it only requests a presigned S3 URL. Meko registers the file once it lands, so there's no separate confirm call. **The caller POSTs the file to the returned `url` directly** — multipart/form-data, every key in `fields` as a form field (in order), then the file's bytes last as a field named `"file"`.
 
 **Confirm first.** The file goes into the datapack's shared knowledge base, which every member can read. Before calling the tool, tell the user which file and datapack, say the team will see it, and wait for a yes.
 
@@ -479,7 +479,7 @@ Poll until `state` is `completed` or `failed` (or the pre-registration terminals
 
 ### artifact_put
 
-**When to use:** An agent has generated a file (report, CSV, PDF, code output, image) and wants to persist it in Meko for later retrieval or cross-agent sharing. Files < 1 MB are stored inline in the DB; files ≥ 1 MB go to the datapack's S3 bucket. Idempotent — uploading the same bytes twice returns the same `content_hash`.
+**When to use:** An agent has generated a file (report, CSV, PDF, code output, image) and wants to persist it in Meko for later retrieval or cross-agent sharing. To make its content searchable by meaning instead, use `knowledgebase_upload_document`. Files < 1 MB are stored inline in the DB; files ≥ 1 MB go to the datapack's S3 bucket. Idempotent — uploading the same bytes twice returns the same `content_hash`.
 
 ```
 artifact_put(
@@ -618,4 +618,4 @@ Agent and KB lifecycle does not ship as MCP tools. If the user asks to create/li
 - REST: `POST/GET/DELETE /datapacks/:datapack_id/agents` (agents), `POST/GET/DELETE /datapacks/:datapack_id/knowledge-bases` (KB sources).
 - Or the Meko Cloud UI at `cloud.mekodata.ai` → Datapacks → agents / knowledge-bases.
 
-Uploading a *file* into an existing KB is not part of that lifecycle restriction — use `knowledgebase_upload_document` (see above) rather than the UI for anything driven from MCP. Agents querying a populated index use `knowledgebase_search`, and can remove a single uploaded file with `knowledgebase_delete_document` — see `tools-rag-workflow.md`.
+Uploading a *file* into an existing KB is not part of that lifecycle restriction — use `knowledgebase_upload_document` (see above) rather than the UI for anything driven from MCP, when you can POST the file's bytes yourself. Agents querying a populated index use `knowledgebase_search`, and can remove a single uploaded file with `knowledgebase_delete_document` — see `tools-rag-workflow.md`.

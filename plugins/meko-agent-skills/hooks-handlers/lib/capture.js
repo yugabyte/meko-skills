@@ -2007,6 +2007,7 @@ function peekTranscriptMetadata(transcriptPath) {
 async function fetchRecentMemories(agentId, datapackId = null, { limit = 10, budget = 2000 } = {}) {
   // memory_get_all takes no `limit`, and FastMCP rejects an unknown argument
   // with an isError result, so `limit` caps the page client-side instead.
+  // Don't send `page_size` either: a server older than MEKO-453 rejects it.
   const payload = {
     agent_id: agentId,
     conversation_id: "00000000-0000-0000-0000-000000000000",

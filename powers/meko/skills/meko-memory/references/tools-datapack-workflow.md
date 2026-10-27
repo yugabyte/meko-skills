@@ -49,7 +49,7 @@ Provisioning agents and knowledge-base *sources* (registering/indexing a new sou
 
 If the user asks to set those up mid-session, point them at the control plane rather than inventing an MCP call that will fail.
 
-Uploading a *file* into an existing KB is a different, already-MCP-exposed operation — use `knowledgebase_upload_document` (see `tools-cookbook.md`) rather than routing the user to the Add Knowledge UI.
+Uploading a *file* into an existing KB is a different, already-MCP-exposed operation — use `knowledgebase_upload_document` (see `tools-cookbook.md`) rather than routing the user to the Add Knowledge UI, when you can POST the file's bytes yourself.
 
 ### Targeting a specific datapack on subsequent calls
 

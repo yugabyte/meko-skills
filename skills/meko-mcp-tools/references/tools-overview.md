@@ -122,14 +122,14 @@ Some things the Meko platform can do are not wired into the MCP tool surface tod
 
 | Capability | Where it lives | How to reach it |
 |---|---|---|
-| Create / list / delete **agents** within a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:datapack_id/agents` (`POST/GET/DELETE /agents/:agent` for targeted deletes), or the Meko control-plane UI |
-| Add / list / delete **knowledge-base sources** on a datapack | `yugabyte/meko` API server | REST: `POST/GET/DELETE /datapacks/:datapack_id/knowledge-bases`, plus `upload-url`, `upload-complete`, `create`, `status` subroutes. Also available in the Meko UI. |
-| Langfuse project-key generation | `yugabyte/meko` API server | REST: `POST /datapacks/:datapack_id/langfuse/project-keys` |
+| Create / list / delete **agents** within a datapack | `yugabyte/agentic-cloud` API server | REST: `POST/GET/DELETE /datapacks/:datapack_id/agents` (`POST/GET/DELETE /agents/:agent` for targeted deletes), or the Meko control-plane UI |
+| Add / list / delete **knowledge-base sources** on a datapack | `yugabyte/agentic-cloud` API server | REST: `POST/GET/DELETE /datapacks/:datapack_id/knowledge-bases`, plus `upload-url`, `upload-complete`, `create`, `status` subroutes. Also available in the Meko UI. |
+| Langfuse project-key generation | `yugabyte/agentic-cloud` API server | REST: `POST /datapacks/:datapack_id/langfuse/project-keys` |
 | Account / billing / tier management | Meko UI only | Not available via MCP or public REST |
 
 The MCP-exposed `datapack_create` / `datapack_search` / `datapack_list` / `datapack_describe` / `datapack_update` / `datapack_delete` tools above are a deliberate subset — the common CRUD that an agent reasonably needs mid-conversation. Anything involving agent or KB lifecycle is control-plane territory.
 
-For a file already on disk or generated mid-conversation, requesting a URL with `knowledgebase_upload_document` and POSTing to it gets it into the KB without leaving MCP for a human's help. The UI upload path (Datapack → Actions → **Add Knowledge**, PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch) remains the way for a human to add files directly. `knowledgebase_search` queries the resulting index either way.
+For a file already on disk or generated mid-conversation, and when you can send the file's bytes in an HTTPS POST to an external URL yourself (a sandboxed session may have the file but no outbound network), requesting a URL with `knowledgebase_upload_document` and POSTing to it gets it into the KB without leaving MCP for a human's help. The UI upload path (Datapack → Actions → **Add Knowledge**, PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch) remains the way for a human to add files directly. `knowledgebase_search` queries the resulting index either way.
 
 ## Common Parameter Patterns
 
