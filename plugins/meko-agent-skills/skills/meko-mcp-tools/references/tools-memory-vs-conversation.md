@@ -99,7 +99,7 @@ Agents on Cloud Meko have two distinct read surfaces. Pick the right one for the
 - **Personal memories** — written by `memory_add`. The `agent_id` records the writer but does not restrict reads; memories are scoped **per-user**, so any of that user's agents can read them via MCP, and no other user can.
 - **Team-shared Shared Knowledge** — arrives two ways:
   1. An agent calls `memory_promote` for exact, user-confirmed memory UUIDs, or the user promotes them from the Cloud UI's Learnings tab. Promotion moves the memories into shared knowledge, strips `user_id`, preserves originating `agent_id` as provenance, and evicts the private mem0 records.
-  2. The user uploads a file via Datapack → Actions → **Add Knowledge** in the Cloud UI. PDF/TXT/MD/JSON/CSV/XML/HTML up to 5MB (Free) / 50MB (Standard) / 60MB (Pro+) each.
+  2. A file is uploaded — by an agent with `knowledgebase_upload_document`, or by the user via Datapack → Actions → **Add Knowledge** in the Cloud UI. PDF/TXT/MD/JSON/CSV/XML/HTML up to 5MB (Free) / 50MB (Standard) / 60MB (Pro+) each.
 
   Both show up in `knowledgebase_search`, tagged `metadata_filters.source: "memory"` vs other values so the agent can distinguish provenance in responses.
 
@@ -116,7 +116,7 @@ Call `context_search`. One call returns your personal memories (every agent, no 
 There is no MCP-side "just put it in a database table" option — raw SQL access isn't part of the MCP surface. Workarounds:
 
 1. **Write a single narrative summary** as a memory: `"The Customer Complaints dataset has fields: Complaint ID (int), Date Submitted (date), Product (text), Sub-product (text), Issue (text)..."` — one call, not row-by-row.
-2. **Suggest the user upload the file** via the Cloud UI's Add Knowledge flow if it's a document (PDF/TXT/MD/JSON/CSV/XML/HTML are supported).
+2. **Upload the file** with `knowledgebase_upload_document` if you have it and can POST its bytes to an external URL yourself, or suggest the user upload it via the Cloud UI's Add Knowledge flow, if it's a document (PDF/TXT/MD/JSON/CSV/XML/HTML are supported).
 3. **Never ingest CSV row-by-row** into memory — each row becomes a fragmented fact with lost context.
 
 ## Memory Storage: automatic, not proactive

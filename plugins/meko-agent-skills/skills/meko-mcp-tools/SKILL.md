@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.4.0"
+  version: "3.5.0"
   tags: mcp, tools, datapack, memory, conversation, rag, meko
 ---
 <!--
@@ -116,7 +116,8 @@ Recall first; save only what capture cannot reach; never re-store a just-stated 
 | User asks "what do we (as a team) know about X?" or about uploaded documents | `knowledgebase_search` (returns uploaded docs + promoted memories). |
 | User asks to share private memories | Follow the exact-ID `memory_promote` confirmation workflow below. |
 | User provides structured/tabular data (CSV, data dictionary) | If it's an actual file the user wants in the team's knowledge base, `knowledgebase_upload_document` accepts `.csv` directly (confirm first; see below). If it's pasted/described data with no file behind it, still don't `memory_add` it row-by-row — ask the user for it as a file, or point them at the UI's Add Knowledge upload. |
-| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. If you (the agent) have the file's bytes, call `knowledgebase_upload_document`. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
+| User wants a file kept in Meko but didn't say how | KB (`knowledgebase_upload_document`) if its content should be searchable later — docs, manuals, policies, notes people will ask about. Artifact (`artifact_put`) to keep it exactly as-is and fetch it back whole — a generated report, a result CSV. If it is not clear whether the user needs semantic search or whole-file retrieval, ask. |
+| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. If you have the file's bytes — already on disk, or generated mid-conversation — and a shell, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com`; in Windows PowerShell, run `curl.exe` with `NUL` in place of `/dev/null`. A 2xx or 3xx status means yes (S3's root normally answers 307). `000`, a connection, DNS or proxy error, or any other status, such as a proxy's 403 or 407, means no. A pass shows outbound HTTPS to S3 works, not that the presigned bucket host does, so if the POST still fails, report it and stop. If it passes, call `knowledgebase_upload_document`. A sandboxed session may have the file but no outbound network; if the check fails, don't call it, since an unused URL holds storage quota for up to 15 minutes. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
 
 ### When to call memory_add
 

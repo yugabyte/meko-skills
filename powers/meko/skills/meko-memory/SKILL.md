@@ -4,7 +4,7 @@ description: Use Meko long-term memory and team knowledge from Kiro. Covers sess
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.2.0"
+  version: "1.3.0"
   tags: mcp, memory, knowledge-base, datapack, meko, kiro
 ---
 <!--
@@ -112,9 +112,14 @@ Each datapack has its own memory store and knowledge base. When you omit
 
 Every datapack member can read the knowledge base, so before you add a file,
 name the file and the datapack, say the team will see it, and wait for the
-user to agree. Then, if you have the file's bytes, call
+user to agree. Then, if you have the file's bytes and a shell, check that you
+can reach S3: run `curl -sS -o /dev/null -m 10 -w '%{http_code}'
+https://s3.amazonaws.com`. A 2xx or 3xx status means yes (S3's root normally
+answers 307); `000` or any other status means no. If it passes, call
 `knowledgebase_upload_document` to get a presigned URL, POST the file to it,
-and check indexing with `knowledgebase_document_status`. Accepted types are
+and check indexing with `knowledgebase_document_status`. With no shell or a
+failed check, don't call the tool: an unused URL holds storage quota for up to
+15 minutes. Accepted types are
 PDF, TXT, MD, JSON, CSV, XML, and HTML. Otherwise, point the user to the Meko
 Cloud UI: **Datapack > Actions > Add Knowledge**.
 

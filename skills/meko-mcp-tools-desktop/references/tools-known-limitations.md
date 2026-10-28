@@ -32,7 +32,7 @@ The one exception is a single uploaded **file**: `knowledgebase_delete_document`
 
 Manually creating a vector index, adding a source to an existing one, or polling raw build status is not exposed via MCP. Use the Cloud UI for those (Datapack → Actions → Add Knowledge).
 
-**Adding a file** is a registered MCP tool: call `knowledgebase_upload_document` directly (accepted extensions PDF/TXT/MD/JSON/CSV/XML/HTML, up to 5 MB Free / 50 MB Standard / 60 MB Pro+ per file) to get a presigned URL, then POST the bytes to it yourself; Meko registers and indexes the file once it lands, so no separate index-management call is needed. Confirm with the user first, because every datapack member can read the knowledge base. The Cloud UI's **Add Knowledge** flow (10 files per batch) remains the human-facing path for the same upload.
+**Adding a file** is a registered MCP tool: if you can send the file's bytes in an HTTPS POST to an external URL yourself (a local shell, or a code tool with internet access), call `knowledgebase_upload_document` directly (accepted extensions PDF/TXT/MD/JSON/CSV/XML/HTML, up to 5 MB Free / 50 MB Standard / 60 MB Pro+ per file) to get a presigned URL, then POST the bytes to it yourself; Meko registers and indexes the file once it lands, so no separate index-management call is needed. Confirm with the user first, because every datapack member can read the knowledge base. The Cloud UI's **Add Knowledge** flow (10 files per batch) remains the human-facing path for the same upload.
 
 To **query** a built index, use `knowledgebase_search` — it returns both uploaded documents and memories the user promoted from the Learnings tab.
 
@@ -57,7 +57,7 @@ It works **poorly** for:
        conversation_id="<session conversation_id>",
        text="Customer Complaints dataset has fields: Complaint ID (int PK), Date Submitted (date), Product (text, e.g. Mortgage/Credit Card), Sub-product (text), Issue (text), Company Response (text), State (text, 2-letter code), ZIP Code (text)")
    ```
-2. **Upload the file itself to the knowledge base** with `knowledgebase_upload_document` — `.csv`, `.json` and the other accepted types go in as they are — and query it with `knowledgebase_search`. (The Cloud UI's **Add Knowledge** flow does the same for a person.)
+2. **Upload the file itself to the knowledge base** with `knowledgebase_upload_document`, if you can POST its bytes yourself — `.csv`, `.json` and the other accepted types go in as they are — and query it with `knowledgebase_search`. (The Cloud UI's **Add Knowledge** flow does the same for a person.)
 
 Never ingest CSV row-by-row into memory — each row becomes a fragmented fact with lost context.
 

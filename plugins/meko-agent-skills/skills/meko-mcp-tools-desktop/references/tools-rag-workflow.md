@@ -143,6 +143,7 @@ From `cloud.mekodata.ai`:
 
 If a *human* asks you "how do I add a document to my knowledge base?",
 point them at this flow. If *you* (the agent) have the file's bytes —
-already on disk, or generated mid-conversation — call
-`knowledgebase_upload_document` directly instead of describing the UI
-flow to yourself.
+already on disk, or generated mid-conversation — and can send them in an
+HTTPS POST to an external URL yourself (a local shell, or a code tool with
+internet access), call `knowledgebase_upload_document` directly instead
+of describing the UI flow to yourself.
