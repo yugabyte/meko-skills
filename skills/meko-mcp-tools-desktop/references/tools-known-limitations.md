@@ -57,7 +57,7 @@ It works **poorly** for:
        conversation_id="<session conversation_id>",
        text="Customer Complaints dataset has fields: Complaint ID (int PK), Date Submitted (date), Product (text, e.g. Mortgage/Credit Card), Sub-product (text), Issue (text), Company Response (text), State (text, 2-letter code), ZIP Code (text)")
    ```
-2. **Upload the file itself to the knowledge base** with `knowledgebase_upload_document` — `.csv`, `.json` and the other accepted types go in as they are — and query it with `knowledgebase_search`. (The Cloud UI's **Add Knowledge** flow does the same for a person.)
+2. **Upload the file itself to the knowledge base** with `knowledgebase_upload_document`, if you can POST its bytes yourself — `.csv`, `.json` and the other accepted types go in as they are — and query it with `knowledgebase_search`. (The Cloud UI's **Add Knowledge** flow does the same for a person.)
 
 Never ingest CSV row-by-row into memory — each row becomes a fragmented fact with lost context.
 

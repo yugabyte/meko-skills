@@ -31,10 +31,6 @@ const ALLOWED_HOSTS = new Set([
   // Meko Cloud console, where users sign up and copy datapack IDs. Linked from
   // the Kiro power's README and INSTRUCTIONS.md.
   "cloud.mekodata.ai",
-  // The pre-call reachability check before knowledgebase_upload_document: the
-  // presigned bucket host isn't known until the URL is issued, so the skills
-  // probe S3's global endpoint instead, discarding the response.
-  "s3.amazonaws.com",
   // Agent Plugins specification, the format the Kiro power follows.
   "agent-plugins.org",
   "yugabyte.com",
@@ -86,6 +82,13 @@ const TOOLCALL_RULES = [
 const INVISIBLE_RE =
   /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\uFEFF]|[\u{E0000}-\u{E007F}]/u;
 
+// Hosts allowed only as a bare root URL (no path, query, or fragment). The
+// skills probe https://s3.amazonaws.com before knowledgebase_upload_document,
+// because the presigned bucket host isn't known until the URL is issued. A
+// path on this host can name any bucket, including one an attacker can write
+// to, so only the root is safe to allow.
+const ROOT_ONLY_HOSTS = new Set(["s3.amazonaws.com"]);
+
 const URL_RE = /\bhttps?:\/\/([^\s/"'`)\]>]+)/gi;
 const RAW_IP_RE = /\bhttps?:\/\/\d{1,3}(?:\.\d{1,3}){3}/i;
 // Require a URI-shaped payload after the scheme so prose like "good data:"
@@ -135,7 +138,12 @@ function scanFile(path) {
       // user-supplied, so allow the documented suffix rather than each subdomain.
       // `(?:^|\.)` matches both the bare domain and any subdomain.
       const isMekoInstance = /(?:^|\.)mcp\.mekodev\.com$/.test(host);
-      if (!isPlaceholder && !isMekoInstance && !ALLOWED_HOSTS.has(host)) {
+      const after = line.slice(URL_RE.lastIndex);
+      const isBareRoot =
+        ROOT_ONLY_HOSTS.has(host) &&
+        m[1] === authority &&
+        /^\/?(?:$|[\s"'`)\]>,.;:])/.test(after);
+      if (!isPlaceholder && !isMekoInstance && !isBareRoot && !ALLOWED_HOSTS.has(host)) {
         findings.push({ path, ln, rule: "non-allowlisted-url", snippet: `${host}` });
       }
     }
