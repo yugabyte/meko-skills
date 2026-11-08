@@ -133,7 +133,12 @@ For a datapack you own or maintain. They read the datapack's Self-learning tab (
 
 ## AMP Infrastructure (behind `SHOW_PG_AMP`)
 
-AMP's serverless-Postgres tools (clusters, branches, compute endpoints) register **only where the server runs with `SHOW_PG_AMP` enabled** (production and dev since 2026-10-21). They're **not catalogued here**. Their model, per-tool examples, and end-to-end flows live in `tools-amp-workflow.md`; failure modes are in `tools-troubleshooting.md` and `tools-known-limitations.md`.
+AMP's serverless-Postgres tools (clusters, branches, compute endpoints) register **only where the server runs with `SHOW_PG_AMP` enabled** (production since 2026-10-21). They're **not catalogued here**. Their model, per-tool examples, and end-to-end flows live in `tools-amp-workflow.md`; failure modes are in `tools-troubleshooting.md` and `tools-known-limitations.md`.
+
+
+## Project tools (behind `MEKO_ENABLE_PROJECTS`)
+
+The 11 `project_*` tools (projects, folders, filing datapacks, and `project_stats`) register **only where the server runs with `MEKO_ENABLE_PROJECTS`**, as production does. They're **not catalogued here**; the Project Tools section of `tools-cookbook.md` covers them.
 
 ## Platform capabilities NOT exposed via MCP
 

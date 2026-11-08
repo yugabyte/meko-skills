@@ -4,7 +4,7 @@ description: Use Meko long-term memory and team knowledge from Kiro. Covers sess
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.4.0"
+  version: "1.4.1"
   tags: mcp, memory, knowledge-base, datapack, meko, kiro
 ---
 <!--
@@ -46,7 +46,7 @@ Inspect the response envelope before its contents:
 
 ### 2. Page through `memory_get_all` before claiming a complete listing
 
-`memory_get_all` returns one page of rows (20 by default; `page_size` up to 100) plus `total`, `page`, `page_size`, and `total_pages`. To list everything, repeat the call with `page=2`, `3`, ... up to `total_pages`, keeping every other argument the same. Claim a complete listing only after you have fetched every page and the rows you hold match `total`; rows written while you page can shift later pages. `promoted=true` lists a different set (promoted memories, with its own `total`), not the next page. It takes no `limit` or `offset`. To find one fact, use `memory_search` or `memory_get_by_id` instead of paging.
+`memory_get_all` returns one page of rows (20 by default; `page_size` up to 100) plus `total`, `page`, `page_size`, and `total_pages`. To list everything, repeat the call with `page=2`, `3`, ... up to `total_pages`, keeping every other argument the same. Claim a complete listing only after you have fetched every page and the rows you hold match `total`; rows written while you page can shift later pages. `promoted=true` lists a different set (promoted memories, with its own `total`), not the next page. It takes no `limit` or `offset`. To find one fact, use `memory_search` or `memory_get_by_id` instead of paging. A server older than this paging rejects `page` and `page_size`; there, call it without them and say the result is the newest rows, not a complete listing.
 
 ### 3. Separate retrieval breadth from reader context
 
@@ -269,6 +269,7 @@ per-user quotas, so avoid redundant calls.
 | `tools-known-limitations.md` | Lifetime quotas, `memory_get_all` paging, and missing capabilities |
 | `tools-agent-id-conventions.md` | How `agent_id` attributes writes and how promotion works |
 | `tools-selflearning-workflow.md` | Read a datapack's weak searches and to-dos, fix them, and verify the fix |
+| `tools-amp-workflow.md` | Provision an AMP Postgres database, fork branches, and hand over a connection |
 
 The references were written for several clients. Where one mentions a
 SessionStart hook or an injected `agent_id`, use the session identity described

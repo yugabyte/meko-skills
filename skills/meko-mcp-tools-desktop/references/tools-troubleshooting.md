@@ -149,7 +149,7 @@ Pre-existing data may be tagged `"agent"`, `"claude_code"`, `"cursor:<slug>"`, o
 
 **Affects:** every `amp_*` tool.
 
-**Why it happens:** the AMP tools register **only when the server runs with `SHOW_PG_AMP` enabled** (production and dev since 2026-10-21). On a deployment without the flag they don't exist.
+**Why it happens:** the AMP tools register **only when the server runs with `SHOW_PG_AMP` enabled** (production since 2026-10-21). On a deployment without the flag they don't exist.
 
 **What to do:** don't retry or invent a variant name. Tell the user AMP isn't enabled on this server; cluster/branch/compute management is available where `SHOW_PG_AMP` is on (and in the Meko UI there).
 
@@ -167,12 +167,12 @@ The agent sees `{"error": <code>, "detail": <message>}` — **no HTTP status**. 
 
 - **`NOT_FOUND`** — the datapack **ownership/access gate** only. A **non-owner** on a mutation, or a **wrong/unknown `datapack_id`**, both return `NOT_FOUND` (`datapack "<id>" not found`) — **indistinguishable**. It does **not** signal a wrong cluster/branch/compute id. If you own the datapack and still get `NOT_FOUND`, re-check the `datapack_id`, not the cluster chain.
 - **`AMP_ERROR`** — the **catch-all for every controller failure**: a wrong `cluster_id`/`branch_id`/`compute_id`, the controller's own "not found"/"conflict"/"invalid_request"/bad-input, etc. The controller's codes and HTTP status are **dropped** — only its message text survives, in `detail`. So a missing resource, a second `read_write` conflict, and a bad quantity all arrive as `AMP_ERROR`; read `detail` to tell them apart. Don't expect a `404`/`409`/`400` code.
-- **`AMP_NOT_REGISTERED`** — no AMP controller is registered for this deployment. Tell the user an admin must register the controller in meko-admin first. This is different from the `SHOW_PG_AMP`-off "tool not found" case (the tool isn't registered at all there).
+- **`AMP_NOT_REGISTERED`** — no AMP controller is registered for this deployment. Tell the user a Meko administrator must register the AMP controller first. This is different from the `SHOW_PG_AMP`-off "tool not found" case (the tool isn't registered at all there).
 
 ## AMP: password and fork failures
 
 - **Lost `cloud_admin` password** — shown once; the control plane keeps only the SCRAM verifier. Deleting and recreating the writer does **not** reset it (the root keeps its password; a new writer's `password` is ignored). Recover with `ALTER ROLE <login_user>` over SQL (`admin` on current builds, `cloud_admin` legacy) from a session still authenticated as that role, or create a new cluster. Never claim you can retrieve the old password.
-- **A fork's / second writer's returned password doesn't log in** — only the first writer on a new database sets `cloud_admin`; a fork uses the parent's password and a later writer on a root keeps the existing one. `amp_compute_create` returns a generated password in those cases but the controller discards it (known server bug, MEKO-1017). Give the user the database's original `cloud_admin` password; don't hand them the new one.
+- **A fork's / second writer's returned password doesn't log in** — only the first writer on a new database sets `cloud_admin`; a fork uses the parent's password and a later writer on a root keeps the existing one. A fork's writer gets no password from `amp_compute_create`, only a `password_notice`. A second writer on a root still gets a generated password, but the controller keeps the original, so it won't log in. Give the user the database's original `cloud_admin` password; don't hand them the new one.
 - **`password_not_allowed_for_read_only`** — you passed `password` to `amp_compute_create` with `role="read_only"`. Read-only endpoints take no password.
 - **Fork fails (`AMP_ERROR`, `detail` mentions the fork point / LSN)** — forking the parent's latest with no running `read_write` endpoint on the parent (its live flush LSN can't be read). The controller's `invalid_request` arrives as `AMP_ERROR` with the reason in `detail`. Create a writer on the parent first, or pass an explicit `fork_point_lsn`.
 - **Create/resize rejected over memory units (`AMP_ERROR`, `detail` about memory)** — memory without a unit (`"8"` is read as 8 *bytes*). Use `Mi`/`Gi`, and keep at least AMP's 8-GiB-per-vCPU floor.

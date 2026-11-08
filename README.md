@@ -34,7 +34,7 @@ Capture for Claude Code, Cursor, Codex, and Kiro now uses a durable queue with a
 The updated skill guides also help agents:
 
 - tell the difference between a failed search and a search with no results;
-- treat `memory_get_all` as a recent window, not a complete export;
+- page through `memory_get_all` to `total_pages` before claiming a complete listing;
 - verify memory, conversation, and artifact writes before reporting success; and
 - keep personal memory separate from shared datapack knowledge.
 

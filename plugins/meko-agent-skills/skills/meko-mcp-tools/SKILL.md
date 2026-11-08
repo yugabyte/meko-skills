@@ -4,7 +4,7 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.6.0"
+  version: "3.6.1"
   tags: mcp, tools, datapack, memory, conversation, rag, amp, meko
 ---
 <!--
@@ -42,7 +42,7 @@ Inspect the response envelope before its contents:
 
 ### 2. Page through `memory_get_all` before claiming a complete listing
 
-`memory_get_all` returns one page of rows (20 by default; `page_size` up to 100) plus `total`, `page`, `page_size`, and `total_pages`. To list everything, repeat the call with `page=2`, `3`, ... up to `total_pages`, keeping every other argument the same. Claim a complete listing only after you have fetched every page and the rows you hold match `total`; rows written while you page can shift later pages. `promoted=true` lists a different set (promoted memories, with its own `total`), not the next page. It takes no `limit` or `offset`. To find one fact, use `memory_search` or `memory_get_by_id` instead of paging.
+`memory_get_all` returns one page of rows (20 by default; `page_size` up to 100) plus `total`, `page`, `page_size`, and `total_pages`. To list everything, repeat the call with `page=2`, `3`, ... up to `total_pages`, keeping every other argument the same. Claim a complete listing only after you have fetched every page and the rows you hold match `total`; rows written while you page can shift later pages. `promoted=true` lists a different set (promoted memories, with its own `total`), not the next page. It takes no `limit` or `offset`. To find one fact, use `memory_search` or `memory_get_by_id` instead of paging. A server older than this paging rejects `page` and `page_size`; there, call it without them and say the result is the newest rows, not a complete listing.
 
 ### 3. Separate retrieval breadth from reader context
 
