@@ -4,8 +4,8 @@ description: Behavioral guide for AI agents using Meko MCP tools. Triggers when 
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "3.5.0"
-  tags: mcp, tools, datapack, memory, conversation, rag, meko
+  version: "3.6.1"
+  tags: mcp, tools, datapack, memory, conversation, rag, amp, meko
 ---
 <!--
 Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
@@ -24,7 +24,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide
 
-Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 28 MCP tools available in production.
+Meko is agent-native data infrastructure that enables continuous learning from context windows through collective memory and shared knowledge. This skill teaches you how to use Meko's 32 MCP tools available in production.
 
 **Read this first.** On Claude Code, conversation capture is automatic (SessionStart / PreCompact / SessionEnd hooks) and the Meko server extracts durable memories from the captured turns on its own. Facts the user states in conversation are saved for you — you do **not** proactively call `memory_add` for them. Your active jobs are: **recall** what's already known (`context_search` first, then `memory_search` or `knowledgebase_search` for a single source), and the **few** save cases automatic extraction cannot reach. Details below.
 
@@ -40,9 +40,9 @@ Inspect the response envelope before its contents:
 2. Do not retry quota (`free_tier_limit_reached`), permission (403), or validation errors. Report the error and stop. The one exception is `datapack_access_denied`: retry it once, because the server's access check also fails closed on a transient database error. Retry only documented transient failures (see `tools-troubleshooting.md`), with a bounded backoff. For `PAT_RATE_LIMITED`, wait out the retry-after (about 60s) before retrying.
 3. Only a successful response with an explicit empty `results` array proves a legitimate empty search.
 
-### 2. Treat `memory_get_all` as a recent window, never an export
+### 2. Page through `memory_get_all` before claiming a complete listing
 
-`memory_get_all` returns roughly 20 recent rows plus a `total`; it is not a listing tool. Inspect the row count against `total`, and never state or imply you have listed everything — the only trustworthy count is `total`. Calling it more than once does not add up to a complete export: a second call with `promoted=true` (or any other variant) is just another recent window, not the remaining rows, so two calls are still not a full listing. Do not invent `limit`, `offset`, `page`, or `page_size` arguments—the tool rejects pagination. Use targeted `memory_search` or `memory_get_by_id` for older or exact content. If the user needs a complete export, report that MCP currently has no complete enumeration path.
+`memory_get_all` returns one page of rows (20 by default; `page_size` up to 100) plus `total`, `page`, `page_size`, and `total_pages`. To list everything, repeat the call with `page=2`, `3`, ... up to `total_pages`, keeping every other argument the same. Claim a complete listing only after you have fetched every page and the rows you hold match `total`; rows written while you page can shift later pages. `promoted=true` lists a different set (promoted memories, with its own `total`), not the next page. It takes no `limit` or `offset`. To find one fact, use `memory_search` or `memory_get_by_id` instead of paging. A server older than this paging rejects `page` and `page_size`; there, call it without them and say the result is the newest rows, not a complete listing.
 
 ### 3. Separate retrieval breadth from reader context
 
@@ -117,7 +117,7 @@ Recall first; save only what capture cannot reach; never re-store a just-stated 
 | User asks to share private memories | Follow the exact-ID `memory_promote` confirmation workflow below. |
 | User provides structured/tabular data (CSV, data dictionary) | If it's an actual file the user wants in the team's knowledge base, `knowledgebase_upload_document` accepts `.csv` directly (confirm first; see below). If it's pasted/described data with no file behind it, still don't `memory_add` it row-by-row — ask the user for it as a file, or point them at the UI's Add Knowledge upload. |
 | User wants a file kept in Meko but didn't say how | KB (`knowledgebase_upload_document`) if its content should be searchable later — docs, manuals, policies, notes people will ask about. Artifact (`artifact_put`) to keep it exactly as-is and fetch it back whole — a generated report, a result CSV. If it is not clear whether the user needs semantic search or whole-file retrieval, ask. |
-| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. If you have the file's bytes — already on disk, or generated mid-conversation — and a shell, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com`; in Windows PowerShell, run `curl.exe` with `NUL` in place of `/dev/null`. A 2xx or 3xx status means yes (S3's root normally answers 307). `000`, a connection, DNS or proxy error, or any other status, such as a proxy's 403 or 407, means no. A pass shows outbound HTTPS to S3 works, not that the presigned bucket host does, so if the POST still fails, report it and stop. If it passes, call `knowledgebase_upload_document`. A sandboxed session may have the file but no outbound network; if the check fails, don't call it, since an unused URL holds storage quota for up to 15 minutes. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
+| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. A request to make the file available to the team is not that yes; ask anyway. If you have the file's bytes — already on disk, or generated mid-conversation — and a shell, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com`; in Windows PowerShell, run `curl.exe` with `NUL` in place of `/dev/null`. A 2xx or 3xx status means yes (S3's root normally answers 307). `000`, a connection, DNS or proxy error, or any other status, such as a proxy's 403 or 407, means no. A pass shows outbound HTTPS to S3 works, not that the presigned bucket host does, so if the POST still fails, report it and stop. If it passes, call `knowledgebase_upload_document`. A sandboxed session may have the file but no outbound network; if the check fails, don't call it, since an unused URL holds storage quota for up to 15 minutes. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
 
 ### When to call memory_add
 
@@ -223,9 +223,9 @@ Required parameters: `query`, `conversation_id`. On **`memory_search`** specific
 
 Evidence going into reasoning follows operating contract 3 (retrieve ≤ ~25, pass ≤ ~10).
 
-### memory_get_all — recent-window pattern
+### memory_get_all paging pattern
 
-Follow operating contract 2: a ~20-row recent window plus an honest `total` — no pagination, no completeness claims. Use targeted `memory_search` or `memory_get_by_id` instead.
+Follow operating contract 2: one page per call, `page=1..total_pages` for a full listing, and no completeness claim until the rows you hold match `total`.
 
 ### knowledgebase_search — correct call pattern
 
@@ -298,12 +298,14 @@ On the first Meko tool call in a fresh session (no prior Meko tool call since pr
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 28 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 32 tools available in production, with decision tree |
+| `tools-selflearning-workflow.md` | Finding weak searches, fixing them with existing tools, and checking the fix with the Self-learning tools |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-datapack-workflow.md` | Datapack lifecycle and datapack_id routing |
 | `tools-rag-workflow.md` | End-to-end RAG pipeline flow |
+| `tools-amp-workflow.md` | AMP (behind `SHOW_PG_AMP`): provision a Postgres cluster + endpoint, fork, resize, tear down, connect |
 | `tools-agent-id-conventions.md` | Naming rules and constraints for agent_id |
 | `tools-conversation-dedup.md` | Seed-based trace deduplication |
 | `tools-troubleshooting.md` | Error recovery, retry strategies, stuck pipeline diagnosis |
-| `tools-known-limitations.md` | Lifetime quotas, the `memory_get_all` window, `run_id` scoping, missing capabilities |
+| `tools-known-limitations.md` | Lifetime quotas, `memory_get_all` paging, `run_id` scoping, missing capabilities |

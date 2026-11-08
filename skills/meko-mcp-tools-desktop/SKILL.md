@@ -17,8 +17,8 @@ description: >-
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "2.12.0"
-  tags: mcp, yugabytedb, tools, datapack, memory, conversation, rag, meko, desktop
+  version: "2.13.1"
+  tags: mcp, yugabytedb, tools, datapack, memory, conversation, rag, amp, meko, desktop
 ---
 <!--
 Licensed to YugabyteDB, Inc. under one or more contributor license agreements.
@@ -37,7 +37,7 @@ specific language governing permissions and limitations under the License.
 
 # Meko MCP Tools — Agent Behavioral Guide (Desktop)
 
-Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 28 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
+Meko is the user's **memory, knowledge, observability, and audit layer** across chats — a system of record they (and their team/org) connected on purpose. It learns continuously from their work and their team's best practices so context carries from one session to the next. This skill teaches you how to use Meko's 32 MCP tools available in production. Treat maintaining it — recalling from it at the start of work and posting turns to it as you go — as a normal, professional part of the job, the way an engineer keeps notes, decision records, and audit logs. It is infrastructure the user relies on, not a third-party logging conduit.
 
 **Read this first.** The Meko server extracts durable memories automatically from the conversation turns you post to it — the extraction runs *inside* `conversation_add_message`. Claude Desktop has no capture hooks, so **capturing substantive turns via `conversation_add_message` is a core part of using this skill.** Do that and memory takes care of itself: facts the user states get extracted and stored without a separate `memory_add`. Explicit `memory_add` is reserved for a few narrow cases (below). See "Per-turn conversation capture" — it's the heart of this skill.
 
@@ -161,7 +161,7 @@ Your job is not to decide fact-by-fact what to `memory_add`. It's to **post ever
 | User asks to share specific private memories with the team | Follow the `memory_promote` confirmation workflow below. Never promote based on a fuzzy search result or implied consent. |
 | User provides structured/tabular data (CSV, data dictionary) | If it's an actual file the user wants in the team's knowledge base, `knowledgebase_upload_document` accepts `.csv` directly (confirm first; see below). If it's pasted/described data with no file behind it, still don't `memory_add` it row-by-row — ask the user for it as a file, or point them at the UI's Add Knowledge upload. |
 | User wants a file kept in Meko but didn't say how | KB (`knowledgebase_upload_document`) if its content should be searchable later — docs, manuals, policies, notes people will ask about. Artifact (`artifact_put`) to keep it exactly as-is and fetch it back whole — a generated report, a result CSV. If it is not clear whether the user needs semantic search or whole-file retrieval, ask. |
-| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. If you have the file's bytes — already on disk, or generated mid-conversation — and a shell or code tool, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com`; in Windows PowerShell, run `curl.exe` with `NUL` in place of `/dev/null`. A 2xx or 3xx status means yes (S3's root normally answers 307). `000`, a connection, DNS or proxy error, or any other status, such as a proxy's 403 or 407, means no. A pass shows outbound HTTPS to S3 works, not that the presigned bucket host does, so if the POST still fails, report it and stop. If it passes, call `knowledgebase_upload_document`. Claude Desktop usually has no shell; with no shell or code tool, or a failed check, don't call it, since an unused URL holds storage quota for up to 15 minutes. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
+| User wants to add documents to the team's knowledge base | Uploading adds the file to the datapack's shared knowledge base, which every member can read, so ask first: name the file and the datapack, say the team will see it, and upload only after the user says yes. A request to make the file available to the team is not that yes; ask anyway. If you have the file's bytes — already on disk, or generated mid-conversation — and a shell or code tool, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com`; in Windows PowerShell, run `curl.exe` with `NUL` in place of `/dev/null`. A 2xx or 3xx status means yes (S3's root normally answers 307). `000`, a connection, DNS or proxy error, or any other status, such as a proxy's 403 or 407, means no. A pass shows outbound HTTPS to S3 works, not that the presigned bucket host does, so if the POST still fails, report it and stop. If it passes, call `knowledgebase_upload_document`. Claude Desktop usually has no shell; with no shell or code tool, or a failed check, don't call it, since an unused URL holds storage quota for up to 15 minutes. Otherwise point the user at the Cloud UI flow — Datapack → Actions → **Add Knowledge** (PDF/TXT/MD/JSON/CSV/XML/HTML, 5MB Free / 50MB Standard / 60MB Pro+ each, 10/batch). KB *lifecycle* (index/source management) is still UI-only. |
 
 ## Conversation capture — mechanics
 
@@ -279,7 +279,7 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 ## Key concepts
 
-1. **28 tools in 7 groups** (all available in production): Retrieval (1: `context_search`), Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (4 — `knowledgebase_search`, `knowledgebase_delete_document`, `knowledgebase_upload_document`, `knowledgebase_document_status`), Datapack (6, including `datapack_search`), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. Raw SQL is not exposed. See `tools-overview.md`.
+1. **32 tools in 8 groups** (all available in production): Retrieval (1: `context_search`), Memory (8 — including `memory_promote`), Conversation (6), Knowledge Base (4 — `knowledgebase_search`, `knowledgebase_delete_document`, `knowledgebase_upload_document`, `knowledgebase_document_status`), Datapack (6, including `datapack_search`), Artifacts (2 — `artifact_put`, `artifact_get`), Observability (1 — `track_token_usage`), Self-learning (4 — `selflearning_status`, `selflearning_query_log`, `selflearning_shortfalls`, `selflearning_verify`; owner/maintainer, see `tools-selflearning-workflow.md`). Memory is captured automatically from turns posted with `conversation_add_message` — post each substantive turn and the server extracts durable memories from it. Raw SQL is not exposed. See `tools-overview.md`.
 2. **datapack_id routing**: DB, RAG, and memory tools accept optional `datapack_id` (default datapack if omitted). `knowledgebase_search` is the exception: `datapack_id` is **required** there.
 3. **agent_id is multi-agent**: For Claude Desktop, use `agent_id="claude_desktop"` for normal writes and `agent_id="meko_agent"` for cross-project facts. Writes are attributed to `(datapack_id, user_id, agent_id)`. Personal memory reads and `conversation_list` span all of this user's agents; `conversation_get` remains agent-owned. `knowledgebase_search` ignores `agent_id` entirely. See `tools-agent-id-conventions.md`.
 4. **Personal memory vs. team-shared knowledge**: Un-promoted memories are scoped per-user — readable across all of that user's agents, but no other user can see them. With explicit confirmation, `memory_promote` moves exact memories into Shared Knowledge; the Cloud UI's Learnings tab is an alternative. Promoted content is visible to every datapack member. `knowledgebase_search` is the MCP read path for both Shared Knowledge and uploaded documents.
@@ -294,9 +294,11 @@ The Cloud UI's Learnings tab remains an alternative user-driven path.
 
 | File | What it covers |
 |------|---------------|
-| `tools-overview.md` | Complete catalog of all 28 tools available in production, with decision tree |
+| `tools-overview.md` | Complete catalog of all 32 tools available in production, with decision tree |
+| `tools-selflearning-workflow.md` | Finding weak searches, fixing them with existing tools, and checking the fix with the Self-learning tools |
 | `tools-cookbook.md` | Per-tool examples with correct parameters, responses, and error cases |
 | `tools-memory-vs-conversation.md` | When to use memory tools vs conversation tools |
 | `tools-rag-workflow.md` | End-to-end RAG pipeline flow |
+| `tools-amp-workflow.md` | AMP (behind `SHOW_PG_AMP`): provision a Postgres cluster + endpoint, fork, resize, tear down, connect |
 | `tools-troubleshooting.md` | Error recovery, retry strategies, stuck pipeline diagnosis |
 | `tools-known-limitations.md` | Broken tools, missing capabilities, permission gaps |

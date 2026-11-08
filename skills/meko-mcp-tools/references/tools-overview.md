@@ -14,7 +14,7 @@ specific language governing permissions and limitations under the License.
 -->
 # Complete Tool Catalog and Decision Tree
 
-**28 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Retrieval (1), Memory (8), Conversation (6), Knowledge Base (4), Datapack (6), Artifacts (2), Observability (1). Combined Meko + AMP endpoints may expose additional infrastructure tools; those are outside this skill's scope.
+**32 Meko data tools covered by this skill.** These are the tools available in production, grouped as: Retrieval (1), Memory (8), Conversation (6), Knowledge Base (4), Datapack (6), Artifacts (2), Observability (1), Self-learning (4). AMP also exposes **14 provisioning tools** (Postgres clusters, branches, compute) where the server runs with `SHOW_PG_AMP` enabled, as production does. They're documented in `tools-amp-workflow.md`, not catalogued here.
 
 ## Quick health check before using tools
 
@@ -42,6 +42,10 @@ User wants to...
 ├── Persist or retrieve a file?
 │   ├── Upload a generated file (report, CSV, PDF)? -> artifact_put (write)
 │   └── Retrieve a previously uploaded file? -------> artifact_get (read)
+├── See what to improve in a datapack's context? -> selflearning_status (read; owner/maintainer)
+│   ├── List the weak searches? ------------> selflearning_query_log (read)
+│   ├── See the searches behind one to-do? -> selflearning_shortfalls (read)
+│   └── Check a fix worked? ----------------> selflearning_verify (write; replays one search)
 └── Manage datapacks?
     ├── Find a datapack id by name? -------> datapack_search(query=...) (read)
     └── CRUD datapack? --------------------> datapack_create/list/describe/update/delete
@@ -71,10 +75,10 @@ Agent lifecycle and KB **index / source lifecycle** (creating indexes, adding so
 | `memory_add(text, conversation_id, agent_id=None, run_id=None, metadata=None, messages=None, datapack_id=None)` | Store fact/preference/entity as long-term memory |
 | `memory_search(query, conversation_id, agent_id=None, limit=10, datapack_id=None, run_id=None)` | Hybrid search across memories (semantic + keyword + entity boost). Drops rows below a server-configured similarity floor (default 0.2), so a weak query can return an empty list. `conversation_id` is required but only nests the trace. It must be a 32-hex id: `""` currently fails (MEKO-707), so pass a freshly generated one if you have no conversation yet. `run_id` filters to one conversation's memories. |
 | `memory_get_by_id(memory_id, conversation_id, agent_id=None, datapack_id=None)` | Direct pgvector row lookup by UUID. Preferred over `memory_search` for exact-id verification. Returns `not_found` for a missing id and for an id that belongs to another account. |
-| `memory_get_all(conversation_id, agent_id=None, run_id=None, datapack_id=None, promoted=False)` | Recent window (about 20 rows) of the user's memories across every agent, plus the true `total`. Not a complete listing. `promoted=True` returns the recent window of promoted memories instead. `run_id` is ignored. |
+| `memory_get_all(conversation_id, agent_id=None, run_id=None, datapack_id=None, promoted=False, page=None, page_size=None)` | One page of the user's memories across every agent (20 rows by default, `page_size` up to 100), plus `total` and `total_pages`. Page with `page=2..total_pages` for a full listing. `promoted=True` pages through promoted memories instead. `run_id` is ignored. |
 | `memory_update(memory_id, text, conversation_id, agent_id=None, datapack_id=None)` | Overwrite memory text. Returns `memory_is_promoted` for a promoted memory (edit those in the Cloud UI Learnings tab). |
 | `memory_delete_by_id(memory_id, conversation_id, agent_id=None, datapack_id=None)` | Delete a single memory. Returns `memory_is_promoted` for a promoted memory. |
-| `memory_delete_all(conversation_id, agent_id=None, run_id=None, datapack_id=None)` | Delete all memories in the **passed `agent_id`'s bucket** (destructive). Unlike reads, this is agent-scoped: omitting `agent_id` deletes only the `meko_agent` bucket. `run_id` narrows it to one conversation; a malformed value returns `invalid_run_id`. |
+| `memory_delete_all(conversation_id, agent_id=None, run_id=None, datapack_id=None)` | Delete all memories in the **passed `agent_id`'s bucket** (destructive). Unlike reads, this is agent-scoped: omitting `agent_id` deletes only the `meko_agent` bucket. `run_id` narrows it to one conversation; a malformed value returns `invalid_run_id`. Returns `deleted_count` and the resolved `scope`; `complete: false` means it ran out of time, so call again. `delete_incomplete` or `delete_failed` means it stopped early; `deleted_count` still counts what it removed. |
 | `memory_promote(conversation_id, memory_ids, agent_id=None, datapack_id=None)` | Promote private memories into the datapack's shared knowledge base (moves them out of mem0, then evicts from mem0 — one-way). Owners/maintainers only; viewers/contributors get 403. |
 
 ## Conversation Tools (6)
@@ -92,10 +96,10 @@ Agent lifecycle and KB **index / source lifecycle** (creating indexes, adding so
 
 | Tool | Purpose |
 |------|---------|
-| `datapack_create(name, conversation_id)` | Create new datapack |
+| `datapack_create(name, conversation_id, folder_id=None)` | Create new datapack. `folder_id` files it into a project folder as it is created (Projects deployments only); the folder is validated first, so a wrong id creates nothing. Omitted, the datapack is Unfiled. |
 | `datapack_search(conversation_id, query="", name="", limit=20, cursor="", grant="", sort="created", include_total=False, datapack_id=None)` | Find datapacks and page through them. Returns `{datapacks, has_more, next_cursor, total}`. Use `query` for part of a name, `name` for an exact name, and `cursor` (the previous page's `next_cursor`) for the next page. `limit` is 1-100. `grant` is `owner` or `shared`; `sort` is `created` (newest first) or `name`. Pass `include_total=True` only when you must show "N of M". Rows carry no connection fields and no counts. Servers older than this tool don't have it; use `datapack_list` there. |
 | `datapack_list(conversation_id, datapack_id=None, query="", limit=0)` | Return datapacks as one array. Fine for a small account. `query` filters by part of a name; more than 100 matches return a `too_many_datapacks` error. `limit` returns the first matches (at most 100) without saying whether more exist. With neither, an account that can see more than 1000 datapacks (the server default limit) gets a `too_many_datapacks` error; use `datapack_search` then. `conversation_id` is required for trace nesting. |
-| `datapack_describe(conversation_id, datapack_id="", include_status=False)` | Describe a datapack by UUID (default datapack if omitted). Returns `memory_count`, `collective_memory_count` (promoted), `learnings_count` (awaiting a promotion decision), `knowledge_base_file_count`, `knowledge_chunk_count`, and `shared_knowledge_count`. `knowledge_base_file_count` and `shared_knowledge_count` are `null` when the status endpoint is unreachable; `knowledge_count` is a deprecated alias of `knowledge_chunk_count`. |
+| `datapack_describe(conversation_id, datapack_id="", include_status=False)` | Describe a datapack by UUID (default datapack if omitted). Returns `memory_count`, `collective_memory_count` (promoted), `learnings_count` (awaiting a promotion decision), `knowledge_base_file_count`, `knowledge_chunk_count`, and `shared_knowledge_count`. `knowledge_base_file_count` and `shared_knowledge_count` are `null` when the status endpoint is unreachable; `knowledge_count` is a deprecated alias of `knowledge_chunk_count`. On Projects deployments it also returns `project`, `folder` and `path` — `null` when the datapack is Unfiled, and absent entirely if the placements lookup fails. |
 | `datapack_update(datapack_id, conversation_id, name=None, description=None, conversation_search_opt_out=None)` | Rename a datapack, update its description, and/or opt out of (or back into) conversation-search caching. Pass at least one field. Opt-out is owner/maintainer only. |
 | `datapack_delete(datapack_id, conversation_id)` | Delete datapack by UUID (irreversible) |
 
@@ -115,6 +119,26 @@ Content-addressed blob store scoped to a datapack. Files < 1 MB go inline in the
 | Tool | Purpose |
 |------|---------|
 | `track_token_usage(conversation_id, name, input_tokens=0, output_tokens=0, total_tokens=None, model=None, message_id=None, datapack_id=None)` | Record an LLM-cost GENERATION observation on the conversation's trace. Primarily called by first-party Meko services (e.g. inference_gateway) that know their LLM's exact token counts. Most end-agents (Cursor, Claude Desktop) don't have those counts at the MCP call layer, so this tool is rarely useful for third-party agents. |
+
+## Self-learning Tools (4)
+
+For a datapack you own or maintain. They read the datapack's Self-learning tab (how well recent `context_search` calls found what they asked for, and what to fix) and replay a weak search to check a fix. They never change content: fix with `memory_add`, `memory_update` or `knowledgebase_upload_document`, using facts the user gave you or a document you read, never ones you inferred. They need a key with `read` scope (`write` for `selflearning_verify`). See [tools-selflearning-workflow.md](tools-selflearning-workflow.md).
+
+| Tool | Purpose |
+|------|---------|
+| `selflearning_status(conversation_id, datapack_id="", last="")` | Quality for the window, the to-do list (`add_context`, `clarify_prompts`, `refresh_sources`, `check_source_errors`, each with its `shortfall` filter, the searches it affects and examples), `open_fixes`, and a breakdown by band, category and reason. Start here. |
+| `selflearning_query_log(conversation_id, datapack_id="", band="low", reason="", category="", log_id="", page=1, last="7d")` | The search log, newest first, 10 rows a page (`has_more` says whether another follows). Low band by default; `mid`, `high`, `all` or a comma list on request. Each row carries `category`, `reason` and `todos`. `log_id` reads one search in full: ranked results with scores and what each source did. |
+| `selflearning_shortfalls(todo_id, conversation_id, datapack_id="", page=1, last="")` | The distinct searches behind one to-do, most repeated first, each `open`, `unverified` or `verified`, with its `log_id` and any saved test prompt and latest run. |
+| `selflearning_verify(conversation_id, datapack_id="", log_id="", test_prompt_id="")` | Replay one search after a fix and return the band before and after, an `outcome` (`improved`, `no_change`, `worse`, `no_baseline`) and whether a document is still indexing. Pass one of `log_id` or `test_prompt_id`. Counts against the search limit; 10 a minute per datapack. |
+
+## AMP Infrastructure (behind `SHOW_PG_AMP`)
+
+AMP's serverless-Postgres tools (clusters, branches, compute endpoints) register **only where the server runs with `SHOW_PG_AMP` enabled** (production since 2026-10-21). They're **not catalogued here**. Their model, per-tool examples, and end-to-end flows live in `tools-amp-workflow.md`; failure modes are in `tools-troubleshooting.md` and `tools-known-limitations.md`.
+
+
+## Project tools (behind `MEKO_ENABLE_PROJECTS`)
+
+The 11 `project_*` tools (projects, folders, filing datapacks, and `project_stats`) register **only where the server runs with `MEKO_ENABLE_PROJECTS`**, as production does. They're **not catalogued here**; the Project Tools section of `tools-cookbook.md` covers them.
 
 ## Platform capabilities NOT exposed via MCP
 
