@@ -52,7 +52,7 @@ These patterns are extracted from real agent sessions. Follow them to avoid wast
 
 ## `memory_search` hangs or times out
 
-`memory_search` can stall for minutes under backend load while other tools respond. Don't raise the client timeout; that only makes the stall longer. Retry once. If it stalls again, report that the search failed, and if the user needs an answer now, try `context_search` or `memory_get_by_id` for a known id. `memory_get_all` only returns a recent window, so it can't replace a search.
+`memory_search` can stall for minutes under backend load while other tools respond. Don't raise the client timeout; that only makes the stall longer. Retry once. If it stalls again, report that the search failed, and if the user needs an answer now, try `context_search` or `memory_get_by_id` for a known id. `memory_get_all` lists memories page by page without ranking them, so it can't replace a search.
 
 ---
 
@@ -94,6 +94,9 @@ Bursts of requests on one token return:
 | `read_only_access` | You're a viewer on this datapack. Viewers can't write conversations or memories, call `memory_promote`, `artifact_put`, or `track_token_usage`, or delete a conversation someone else started. | Don't retry, and don't switch datapacks to get around it. Tell the user; an owner or maintainer can change their role. |
 | `role_lookup_failed` | The server couldn't read your role for this datapack, so it refused the write. | Retry. |
 | `invalid_run_id` | `memory_delete_all` got a `run_id` that isn't a conversation id. | Pass the conversation UUID, or omit `run_id`. |
+| `invalid_page` / `invalid_page_size` | `memory_get_all` got a `page` or `page_size` below 1. | Pass `page` from 1 to `total_pages` and `page_size` from 1 to 100, or omit both. |
+| `delete_incomplete` | `memory_delete_all` stopped because a row was still there after its delete; `deleted_count` says how many it did remove. | Retry once. If it repeats, report the count and that rows remain; don't claim the scope is empty. |
+| `delete_failed` | A delete raised partway through `memory_delete_all`; `deleted_count` rows are already gone. | Report the count and the error. Retry once for a transient error; the retry deletes only what is left. |
 | `embedder_error` from `knowledgebase_search` | The server couldn't resolve the embedding setup for this datapack's index. | Report it; retrying won't help. |
 | `invalid_force_source` from `context_search` | `force_source` isn't `auto`, `memory`, `knowledge_base`, or `conversation`. | Omit `force_source`. |
 
@@ -140,3 +143,35 @@ Pre-existing data may be tagged `"agent"`, `"claude_code"`, `"cursor:<slug>"`, o
 | `conversation_create` | **No** | Creates duplicate conversations |
 | `conversation_add_message` with `seed` | Yes | Seed-based dedup prevents duplicates |
 | `conversation_add_message` without `seed` | **No** | Creates duplicate messages |
+
+## AMP tools: "tool not found"
+
+**Affects:** every `amp_*` tool.
+
+**Why it happens:** the AMP tools register **only when the server runs with `SHOW_PG_AMP` enabled** (production and dev since 2026-10-21). On a deployment without the flag they don't exist.
+
+**What to do:** don't retry or invent a variant name. Tell the user AMP isn't enabled on this server; cluster/branch/compute management is available where `SHOW_PG_AMP` is on (and in the Meko UI there).
+
+## AMP: tier cap — the `*_TIER_CORE_LIMIT` error code
+
+**Affects:** `amp_cluster_create` (with `with_writer`), `amp_compute_create`, `amp_compute_resize`.
+
+**Why it happens:** the sized compute would push you past the account's vCPU cap, summed **across all your datapacks** (enterprise uncapped). The cap sizes aren't final — read them from `amp_core_budget` (`max_cores`/`tier`); don't assume fixed numbers.
+
+**What to do:** the agent sees `error: "FREE_TIER_CORE_LIMIT"` (or `STANDARD_`/`PRO_`) — a **distinct** code, not the `AMP_ERROR` catch-all. Read `amp_core_budget` to show `used_cores` / `max_cores`, then size down or tell the user to upgrade in Settings. **Do not retry** — it fails identically. Call `amp_core_budget` *before* a sized create, but treat it as advisory (it falls back to `used_cores: 0` / `at_limit: false` when the api_server can't reach AMP, and an older api_server returns `core_budget_unavailable`), so the limit error can still occur.
+
+## AMP: reading the error — `NOT_FOUND`, `AMP_ERROR`, `AMP_NOT_REGISTERED`
+
+The agent sees `{"error": <code>, "detail": <message>}` — **no HTTP status**. Key on the `error` code:
+
+- **`NOT_FOUND`** — the datapack **ownership/access gate** only. A **non-owner** on a mutation, or a **wrong/unknown `datapack_id`**, both return `NOT_FOUND` (`datapack "<id>" not found`) — **indistinguishable**. It does **not** signal a wrong cluster/branch/compute id. If you own the datapack and still get `NOT_FOUND`, re-check the `datapack_id`, not the cluster chain.
+- **`AMP_ERROR`** — the **catch-all for every controller failure**: a wrong `cluster_id`/`branch_id`/`compute_id`, the controller's own "not found"/"conflict"/"invalid_request"/bad-input, etc. The controller's codes and HTTP status are **dropped** — only its message text survives, in `detail`. So a missing resource, a second `read_write` conflict, and a bad quantity all arrive as `AMP_ERROR`; read `detail` to tell them apart. Don't expect a `404`/`409`/`400` code.
+- **`AMP_NOT_REGISTERED`** — no AMP controller is registered for this deployment. Tell the user an admin must register the controller in meko-admin first. This is different from the `SHOW_PG_AMP`-off "tool not found" case (the tool isn't registered at all there).
+
+## AMP: password and fork failures
+
+- **Lost `cloud_admin` password** — shown once; the control plane keeps only the SCRAM verifier. Deleting and recreating the writer does **not** reset it (the root keeps its password; a new writer's `password` is ignored). Recover with `ALTER ROLE <login_user>` over SQL (`admin` on current builds, `cloud_admin` legacy) from a session still authenticated as that role, or create a new cluster. Never claim you can retrieve the old password.
+- **A fork's / second writer's returned password doesn't log in** — only the first writer on a new database sets `cloud_admin`; a fork uses the parent's password and a later writer on a root keeps the existing one. `amp_compute_create` returns a generated password in those cases but the controller discards it (known server bug, MEKO-1017). Give the user the database's original `cloud_admin` password; don't hand them the new one.
+- **`password_not_allowed_for_read_only`** — you passed `password` to `amp_compute_create` with `role="read_only"`. Read-only endpoints take no password.
+- **Fork fails (`AMP_ERROR`, `detail` mentions the fork point / LSN)** — forking the parent's latest with no running `read_write` endpoint on the parent (its live flush LSN can't be read). The controller's `invalid_request` arrives as `AMP_ERROR` with the reason in `detail`. Create a writer on the parent first, or pass an explicit `fork_point_lsn`.
+- **Create/resize rejected over memory units (`AMP_ERROR`, `detail` about memory)** — memory without a unit (`"8"` is read as 8 *bytes*). Use `Mi`/`Gi`, and keep at least AMP's 8-GiB-per-vCPU floor.

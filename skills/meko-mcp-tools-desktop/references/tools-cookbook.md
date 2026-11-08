@@ -118,10 +118,11 @@ memory_search(query="user preferences", agent_id="claude_desktop", conversation_
 
 ### memory_get_all
 
-**When to use:** See the most recent memories (about 20 rows) across every `agent_id`, plus the true `total`. It is not a complete listing and takes no paging arguments (SKILL.md operating contract 2). Use `memory_search` or `memory_get_by_id` for anything older or specific.
+**When to use:** List the user's memories across every `agent_id`, one page at a time (20 rows by default, `page_size` up to 100). For a full listing, repeat with `page=2..total_pages`, keeping every other argument the same, and claim a complete listing only when the rows you hold match `total`. Writes made while you page can shift rows between pages. `promoted=true` lists a separate set, not the next page. Use `memory_search` or `memory_get_by_id` to find something specific.
 
 ```
 memory_get_all(agent_id="claude_desktop", conversation_id="<id>")
+memory_get_all(agent_id="claude_desktop", conversation_id="<id>", page=2, page_size=100)
 ```
 
 ---
@@ -156,7 +157,7 @@ memory_delete_by_id(memory_id="mem-uuid-123", agent_id="claude_desktop", convers
 
 ### memory_delete_all
 
-**Destructive.** Deletes all memories in the passed `agent_id`'s bucket in the datapack. It does not touch other agents' rows, even though `memory_search` shows them; omitting `agent_id` deletes only the `meko_agent` bucket. Pass `run_id=<conversation_id>` to limit it to one conversation. For removing a single memory, prefer `memory_delete_by_id`.
+**Destructive.** Deletes all memories in the passed `agent_id`'s bucket in the datapack. It does not touch other agents' rows, even though `memory_search` shows them; omitting `agent_id` deletes only the `meko_agent` bucket. Pass `run_id=<conversation_id>` to limit it to one conversation; an omitted `datapack_id` means your default datapack. The response reports `deleted_count` and the `scope` it actually used (`datapack_id`, `agent_id`, `user_id`, `run_id`), so check both before telling the user what was removed. If `complete` is `false`, the call ran out of time with memories left: call it again with the same arguments and add up the counts. For removing a single memory, prefer `memory_delete_by_id`.
 
 ```
 memory_delete_all(agent_id="claude_desktop", conversation_id="<id>")
@@ -311,7 +312,7 @@ Returns `{"document_id", "chunks_deleted", "s3_deleted"}` — if `s3_deleted` is
 
 **When to use:** Get a file's bytes into the datapack's KB for later `knowledgebase_search` retrieval — a file already on disk, or one generated mid-conversation. Use it when the content should be searchable by meaning; to keep a file exactly as-is and fetch it back whole, use `artifact_put`. Before calling it, check that you can reach S3 first: run `curl -sS -o /dev/null -m 10 -w '%{http_code}' https://s3.amazonaws.com`; in Windows PowerShell, run `curl.exe` with `NUL` in place of `/dev/null`. A 2xx or 3xx status means yes (S3's root normally answers 307). `000`, a connection, DNS or proxy error, or any other status, such as a proxy's 403 or 407, means no. A pass shows outbound HTTPS to S3 works, not that the presigned bucket host does, so if the POST still fails, report it and stop. With no shell or code tool, or a failed check, don't call it — point the user at the UI. This tool never touches the file's bytes itself; it only requests a presigned S3 URL. Meko registers the file once it lands, so there's no separate confirm call. **The caller POSTs the file to the returned `url` directly** — multipart/form-data, every key in `fields` as a form field (in order), then the file's bytes last as a field named `"file"`.
 
-**Confirm first.** The file goes into the datapack's shared knowledge base, which every member can read. Before calling the tool, tell the user which file and datapack, say the team will see it, and wait for a yes.
+**Confirm first.** The file goes into the datapack's shared knowledge base, which every member can read. Before calling the tool, tell the user which file and datapack, say the team will see it, and wait for a yes. A request to make the file available to the team is not that yes; ask anyway.
 
 **You need a shell that can make the POST** (Python, curl, or PowerShell, below). Without one, as in Claude Desktop by default, don't call the tool: point the user at Datapack → Actions → **Add Knowledge**. An issued URL holds its `size` against the storage quota for up to 15 minutes even if nothing is uploaded.
 
@@ -611,3 +612,133 @@ Agent and KB lifecycle does not ship as MCP tools. If the user asks to create/li
 - Or the Meko Cloud UI at `cloud.mekodata.ai` → Datapacks → agents / knowledge-bases.
 
 Uploading a *file* into an existing KB is not part of that lifecycle restriction — use `knowledgebase_upload_document` (see above) rather than the UI for anything driven from MCP, when you can POST the file's bytes yourself. Agents querying a populated index use `knowledgebase_search`, and can remove a single uploaded file with `knowledgebase_delete_document` — see `tools-rag-workflow.md`.
+
+## Project Tools
+
+Registered only where `MEKO_ENABLE_PROJECTS` is set — the same env var
+api_server reads, which does not serve the `/projects` routes without it.
+Without the flag they are not in the tool list at all.
+
+A **project** groups datapacks that work toward one outcome. A **folder** is
+one kind or stage of work. A **datapack** holds the focused context for that
+work. Folders do not nest, and a datapack belongs to at most one project —
+anything else is **Unfiled**, which works normally.
+
+### Two things to get right
+
+**Deleting removes structure, never content.** `project_delete` and
+`project_folder_delete` leave the datapacks inside Unfiled and still working,
+with their conversations, memory and knowledge untouched. Neither is a way to
+clean up datapacks; `datapack_delete` is the only tool that destroys one. Both
+are still irreversible — the layout is gone — so confirm with the user first,
+naming what you are deleting.
+
+**A shared project answers "not found", not "forbidden".** Every write is
+owner-only. If `project_update` or `project_folder_create` comes back
+not-found on a project the user can clearly see, they do not own it. Say so.
+Do **not** create a project of the same name: that silently makes a duplicate
+in their own tree while the real one is untouched.
+
+Filing is the exception, but a narrow one: `project_add_datapack` and
+`project_remove_datapack` need ownership of the *datapack*, not of the
+project — where a datapack lives is its owner's call. A datapack shared
+with you cannot be filed into your tree, and you are told so outright
+rather than getting the not-found above.
+
+### Setting up a project
+
+Ask what the project is for and which folders they want before calling.
+The description is what a later search uses to decide where new work belongs,
+and folders are easier to choose up front than to reorganise.
+
+```python
+project_create(
+    project_name="adlc",
+    description="Agent-driven lifecycle work for the 2026 release",
+    folders=["coding_standards", "features", "integration_tests"],
+    conversation_id=conv_id,
+)
+# -> {"project_id": "...", "project_name": "adlc", ...}
+```
+
+Omit `folders` to take the default layout's folders; omit `description` only
+if the user declines to give one. Add a folder later with:
+
+```python
+project_folder_create(
+    project_id=pid,
+    folder_name="perf_baselines",
+    description="Benchmarks we re-run before each cut",
+    conversation_id=conv_id,
+)
+```
+
+### Finding your way around
+
+```python
+project_list(conversation_id=conv_id)
+# Projects the user owns AND projects shared with them.
+
+project_describe(project_id=pid, conversation_id=conv_id)
+# The folders and the datapacks in each. This is where folder_id comes from.
+
+project_stats(project_id=pid, conversation_id=conv_id)
+# Totals across the project: searches, conversations, artifacts, KB files.
+```
+
+Use `project_describe` for structure and `project_stats` for volume. Asking
+"what is in this project" usually means the former.
+
+### Filing datapacks
+
+`folder_id` needs the Projects feature. Without it the call is refused
+rather than quietly creating an Unfiled datapack and reporting it as filed.
+
+```python
+# Create straight into a folder — one call, not two.
+datapack_create(name="perf-baseline", folder_id=fid, conversation_id=conv_id)
+
+# File an existing one. Already filed? This MOVES it: a datapack has one home.
+project_add_datapack(datapack_id=dp, folder_id=fid, conversation_id=conv_id)
+
+# Take it out of the project. The datapack is untouched and keeps working.
+project_remove_datapack(datapack_id=dp, conversation_id=conv_id)
+```
+
+`datapack_describe` reports `project`, `folder` and `path` for a filed
+datapack, and `null` for each when it is Unfiled. Missing keys mean the lookup
+failed, which is not the same as Unfiled.
+
+### Renaming and describing
+
+Pass only what changes; anything omitted is left alone. Passing neither is
+refused with `nothing_to_update` rather than issuing an empty write.
+
+```python
+project_update(project_id=pid, project_name="adlc-2026", conversation_id=conv_id)
+project_folder_update(
+    project_id=pid, folder_id=fid,
+    description="Benchmarks we re-run before each cut",
+    conversation_id=conv_id,
+)
+```
+
+Omitted and empty are different answers: leave a field out to keep what is
+there, and pass `description=""` to clear it.
+
+A folder's description is worth filling in: search uses it to decide which
+folder a new datapack belongs in, and a name alone rarely says.
+
+### Deleting
+
+```python
+# The folder goes; its datapacks become Unfiled. The project is untouched.
+project_folder_delete(project_id=pid, folder_id=fid, conversation_id=conv_id)
+
+# The project and its folders go; every datapack inside becomes Unfiled.
+project_delete(project_id=pid, conversation_id=conv_id)
+```
+
+Confirm with the user before either, and tell them what actually happens —
+"the 12 datapacks inside will become unfiled and keep working" is the true
+sentence, not "will be deleted".

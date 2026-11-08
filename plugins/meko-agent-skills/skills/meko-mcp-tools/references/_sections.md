@@ -20,13 +20,16 @@ specific language governing permissions and limitations under the License.
 # Reference Sections
 
 ## Tool Selection & Catalog
-- [tools-overview.md](tools-overview.md) — Complete catalog of all 28 tools available in production, with a decision tree
+- [tools-overview.md](tools-overview.md) — Complete catalog of all 32 tools available in production, with a decision tree
 
 ## Tool-Specific Guidance
 - [tools-memory-vs-conversation.md](tools-memory-vs-conversation.md) — Decision framework: memory_add vs conversation_create/conversation_add_message
 - [tools-conversation-reasoning.md](tools-conversation-reasoning.md) — Authoring the `reasoning` and `plan` fields on `conversation_add_message`, with worked examples
 - [tools-datapack-workflow.md](tools-datapack-workflow.md) — Datapack lifecycle, datapack_id routing, and multi-database patterns
+- [tools-selflearning-workflow.md](tools-selflearning-workflow.md) — Finding weak searches, fixing them with existing tools, and checking the fix with the Self-learning tools
 - [tools-rag-workflow.md](tools-rag-workflow.md) — End-to-end RAG pipeline: source registration, index creation, status polling
+- [tools-amp-workflow.md](tools-amp-workflow.md) — End-to-end AMP flows: provision a Postgres cluster + endpoint, fork a branch, resize, tear down, and connect
+
 
 ## Safety & Permissions
 
@@ -40,4 +43,4 @@ specific language governing permissions and limitations under the License.
 
 ## Troubleshooting & Limitations
 - [tools-troubleshooting.md](tools-troubleshooting.md) — Error recovery, retry strategies, stuck pipeline diagnosis
-- [tools-known-limitations.md](tools-known-limitations.md) — Lifetime quotas, the `memory_get_all` window, `run_id` scoping, missing capabilities
+- [tools-known-limitations.md](tools-known-limitations.md) — Lifetime quotas, `memory_get_all` paging, `run_id` scoping, missing capabilities

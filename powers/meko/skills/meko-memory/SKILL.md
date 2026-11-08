@@ -1,10 +1,10 @@
 ---
 name: meko-memory
-description: Use Meko long-term memory and team knowledge from Kiro. Covers session setup without hooks, recall with memory_search and context_search, saving and correcting memories, datapack routing, knowledge-base search, sharing memories with memory_promote, and error handling for every Meko tool.
+description: Use Meko long-term memory and team knowledge from Kiro. Covers session setup without hooks, recall with memory_search and context_search, saving, correcting and clearing memories, datapack routing, knowledge-base search, sharing memories with memory_promote, and error handling for every Meko tool.
 license: Apache-2.0
 metadata:
   author: Meko
-  version: "1.3.0"
+  version: "1.4.0"
   tags: mcp, memory, knowledge-base, datapack, meko, kiro
 ---
 <!--
@@ -44,9 +44,9 @@ Inspect the response envelope before its contents:
 2. Do not retry quota (`free_tier_limit_reached`), permission (403), or validation errors. Report the error and stop. The one exception is `datapack_access_denied`: retry it once, because the server's access check also fails closed on a transient database error. Retry only documented transient failures (see `tools-troubleshooting.md`), with a bounded backoff. For `PAT_RATE_LIMITED`, wait out the retry-after (about 60s) before retrying.
 3. Only a successful response with an explicit empty `results` array proves a legitimate empty search.
 
-### 2. Treat `memory_get_all` as a recent window, never an export
+### 2. Page through `memory_get_all` before claiming a complete listing
 
-`memory_get_all` returns roughly 20 recent rows plus a `total`; it is not a listing tool. Inspect the row count against `total`, and never state or imply you have listed everything — the only trustworthy count is `total`. Calling it more than once does not add up to a complete export: a second call with `promoted=true` (or any other variant) is just another recent window, not the remaining rows, so two calls are still not a full listing. Do not invent `limit`, `offset`, `page`, or `page_size` arguments—the tool rejects pagination. Use targeted `memory_search` or `memory_get_by_id` for older or exact content. If the user needs a complete export, report that MCP currently has no complete enumeration path.
+`memory_get_all` returns one page of rows (20 by default; `page_size` up to 100) plus `total`, `page`, `page_size`, and `total_pages`. To list everything, repeat the call with `page=2`, `3`, ... up to `total_pages`, keeping every other argument the same. Claim a complete listing only after you have fetched every page and the rows you hold match `total`; rows written while you page can shift later pages. `promoted=true` lists a different set (promoted memories, with its own `total`), not the next page. It takes no `limit` or `offset`. To find one fact, use `memory_search` or `memory_get_by_id` instead of paging.
 
 ### 3. Separate retrieval breadth from reader context
 
@@ -83,6 +83,9 @@ the user says.
 - `memory_search` and `memory_get_all` return every memory this user owns in
   the datapack. `agent_id` doesn't filter them, so don't repeat a search per
   agent.
+- `memory_delete_all` deletes only the memories stored under the `agent_id`
+  you pass, even though reads span every agent. A `memory_search` preview can
+  show memories this call won't delete.
 - `conversation_get` only returns conversations created under the same
   `agent_id`. Any other value returns `agent_id_mismatch`.
 - `knowledgebase_search` is scoped to the datapack and ignores `agent_id`.
@@ -166,8 +169,8 @@ knowledgebase_search(query="incident runbook for the billing service",
 
 ### memory_get_all
 
-Follow operating contract 2. It returns a recent window of about 20 rows plus a
-`total`, never a full export.
+Follow operating contract 2. It returns one page (20 rows by default) plus
+`total` and `total_pages`; page through with `page=2..total_pages` for a full listing.
 
 ## Save
 
@@ -201,6 +204,36 @@ Follow operating contract 4. `memory_add` returns
 exists before you tell the user it was saved. If the read-back
 fails, say the save didn't succeed and include the error.
 
+## Clear memories with memory_delete_all
+
+`memory_delete_all` permanently deletes the user's memories in a datapack that
+one agent stored. Deleted memories can't be recovered, so call it only for a
+scope the user asked to clear. To remove one memory, use
+`memory_delete_by_id` instead.
+
+- Pass the `agent_id` that stored the memories. Omitting it deletes only the
+  `meko_agent` memories. To clear memories from several agents, call it once
+  per `agent_id`.
+- Pass `run_id=<conversation UUID>` to delete only one conversation's
+  memories. A value that isn't a conversation UUID returns `invalid_run_id`.
+- Omitting `datapack_id` targets the user's default datapack.
+
+```text
+memory_delete_all(agent_id="<agent_id>",
+                  conversation_id="<conversation_id>")
+```
+
+Read the response before you report the result:
+
+- `deleted_count` and `scope` (`datapack_id`, `agent_id`, `user_id`,
+  `run_id`) say what was deleted and where. Report those, not the arguments
+  you sent.
+- `complete: false` means the call ran out of time with memories left. Call
+  again with the same arguments and add up the counts.
+- `delete_incomplete` and `delete_failed` mean the call stopped early;
+  `deleted_count` still counts what it removed. See `tools-troubleshooting.md`
+  for what to do next.
+
 ## Share memories with memory_promote
 
 `memory_promote` moves private memories into the datapack's shared knowledge
@@ -233,8 +266,9 @@ per-user quotas, so avoid redundant calls.
 | `tools-rag-workflow.md` | End-to-end retrieval flow |
 | `tools-conversation-reasoning.md` | Recording reasoning with conversation messages |
 | `tools-troubleshooting.md` | Error recovery and retry rules |
-| `tools-known-limitations.md` | Lifetime quotas, the `memory_get_all` window, and missing capabilities |
+| `tools-known-limitations.md` | Lifetime quotas, `memory_get_all` paging, and missing capabilities |
 | `tools-agent-id-conventions.md` | How `agent_id` attributes writes and how promotion works |
+| `tools-selflearning-workflow.md` | Read a datapack's weak searches and to-dos, fix them, and verify the fix |
 
 The references were written for several clients. Where one mentions a
 SessionStart hook or an injected `agent_id`, use the session identity described

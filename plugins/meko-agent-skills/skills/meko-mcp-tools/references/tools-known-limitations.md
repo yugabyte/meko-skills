@@ -36,9 +36,9 @@ When the cap is reached the tool returns an error object with code `free_tier_li
 - **Budget searches**: polling, verify read-backs, and per-item sweeps all draw from one pool.
 - **Never report this error as "no results"** — it is a failed search; see `tools-troubleshooting.md`.
 
-## memory_get_all returns a fixed recent window — it has NO pagination
+## memory_get_all returns one page per call
 
-One call returns roughly the **20 most recent rows**; the response's `total` reports the true count. Scoping arguments do not narrow the window, and paging parameters are rejected — there is no way to reach older rows through this tool. A second call with `promoted=true` returns the recent window of promoted rows, not the remaining personal rows; neither call alone nor the two together is a complete listing. Follow SKILL.md operating contract 2: state the gap when `total` exceeds rows returned, never claim a complete enumeration, and use `memory_search` or `memory_get_by_id` for anything specific.
+One call returns one page: **20 rows by default**, up to 100 with `page_size` (a larger value is lowered to 100, and the response's `page_size` shows the value used). Reach the rest with `page=2..total_pages`. A `page` or `page_size` below 1 returns `invalid_page` / `invalid_page_size`. Pages are not a snapshot: a memory written or deleted while you page can shift rows between pages, so compare what you hold with `total` before claiming a complete listing (SKILL.md operating contract 2). `promoted=true` pages through promoted memories, a separate set with its own `total`.
 
 ## run_id is a read/delete filter on the conversation id, not a write key
 
@@ -117,3 +117,20 @@ To find a conversation by other attributes, browse with `conversation_list` and 
 ## Very long conversations can't be read back
 
 When a conversation's trace grows too large for Langfuse, `conversation_get` and `conversation_update` return `{"error": "not_found", "detail": "Conversation <id> not found"}` or time out for that conversation, even though `conversation_add_message` and `conversation_delete` still work. Servers without the MEKO-714 fix instead return `not_found` from `conversation_add_message` on these conversations. If read-back or a write fails with `not_found` on a long conversation that you know exists, report the failure as a server-side limit on that conversation. Don't recreate the conversation under the same id or replay its messages; that makes the trace larger.
+
+## AMP is serverless Postgres in the datapack (behind `SHOW_PG_AMP`)
+
+The `amp_*` tools register **only where the server has `SHOW_PG_AMP` enabled** (production and dev since 2026-10-21) — absent otherwise. They provision a real Postgres database (cluster → branch → compute endpoint) for the user's app: you get a connection string and connect with any Postgres client. Use AMP when the user needs a database; for agent context (memories, files, artifacts) use the Datapack tools (`memory_*` / `conversation_*` / `knowledgebase_*` / `artifact_*`), which target the *datapack's* store, not an AMP cluster. See `tools-amp-workflow.md`.
+
+## AMP compute is capped by a per-account vCPU tier limit
+
+A create with a writer, `amp_compute_create`, and a **CPU-growing** resize reserve compute against the account's vCPU cap, summed across **all** the user's datapacks (a **memory-only** resize does not); enterprise is uncapped. **The cap sizes aren't final — don't hard-code them.** Read the live cap from `amp_core_budget` (`max_cores`, `tier`, `used_cores`, `at_limit`). Exceeding it returns the `error` code `*_TIER_CORE_LIMIT` (distinct, not `AMP_ERROR`). **Workaround:** call `amp_core_budget` before a sized create/resize — but treat it as advisory (it falls back to `used_cores: 0` / `at_limit: false` when the api_server can't reach AMP), so the limit error can still occur; size down or upgrade.
+
+## Other AMP limits
+
+- **Owner-only mutations.** Creating/deleting clusters, branches, and compute is owner-only on the datapack; non-owners get `error: "NOT_FOUND"` (indistinguishable from a wrong `datapack_id`). Reads need datapack access.
+- **One `read_write` endpoint per branch.** A second fails as `AMP_ERROR` (conflict message in `detail`) — add `read_only` compute or a new branch.
+- **`cloud_admin` password is set once, by the first writer on a new database.** A fork's writer and a second writer on a root **inherit** the existing password; a `password` they pass is validated then ignored. The control plane keeps only the SCRAM verifier, so a lost password can't be returned. **Deleting and recreating the writer does NOT reset it** — recover with `ALTER ROLE <login_user>` over SQL (`admin` on current builds, `cloud_admin` legacy) from a session still authenticated as that role, or create a new cluster. `amp_compute_create` returns a generated password for every `read_write`, but on a fork/second writer it won't log in (known server bug, MEKO-1017) — don't hand it to the user there.
+- **`pg_version` accepts only the default (18) today.**
+- **Connecting is a credentials handoff; pick connectivity at create** — give the user the endpoint's `address` (from `amp_compute_list`) and the endpoint password (the **create** response's `cloud_admin_password`; `amp_compute_list` returns the address, not the password). Log in as the endpoint's `login_user`, or **`admin`** when none is reported (fall back to `cloud_admin` on legacy). A default **`cluster_ip`** endpoint is reachable **only** from inside the cluster (`kubectl port-forward`, TLS) or the dev tailnet — **not from a laptop or app**. For a user connecting from outside, create it **`ingress_external`** + `allowed_cidrs` (create-time only): it gets a public address on the shared ingress load balancer, reached with `sslmode=require` (if the friendly `ep-<id>.<zone>` name doesn't resolve on dev yet, use the shard NLB host + the port from `address`).
+- **Calls block while the api_server polls the AMP task** — up to ~5 minutes (client timeout floored at 360s), not "about a minute". There is no task-polling tool. A create that **errors or times out may still have provisioned** the resource server-side: verify with `amp_cluster_list`/`amp_compute_list` before recreating (a blind retry orphans compute against the vCPU cap), and keep any `cloud_admin_password` the error returned.
