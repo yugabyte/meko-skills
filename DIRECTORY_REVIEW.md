@@ -19,7 +19,7 @@ This page summarizes the public information Anthropic reviewers need for the Mek
 
 ## Privacy, Data Collection, and Retention
 
-The plugin connects Claude to the hosted Meko MCP endpoint at `https://mcp.mekodata.ai/mcp`. Its bundle contains four skills: two behavioral guides cover the 23 Cloud Meko tools for memory, conversation history, knowledge-base search, datapack management, artifacts, and token-usage tracking; two companion skills provide datapack-selection workflows for coding and Desktop clients.
+The plugin connects Claude to the hosted Meko MCP endpoint at `https://mcp.mekodata.ai/mcp`. Its bundle contains four skills: two behavioral guides cover the 28 core Cloud Meko tools for retrieval, memory, conversation history, knowledge bases, datapack management, artifacts, and token-usage tracking, plus feature-gated self-learning and AMP tools; two companion skills provide datapack-selection workflows for coding and Desktop clients.
 
 When the Claude Code plugin hooks are enabled, `SessionStart` creates or resumes a Meko conversation and injects its `conversation_id`, project-derived `agent_id`, active datapack, and recalled memories. `PreCompact`, `SessionEnd`, and a non-interrupting background checkpoint timer (10 minutes by default) can send user prompts, assistant responses, tool-call summaries, tool-result summaries, and limited metadata such as working directory, git branch, session id, and timestamp to Meko using `conversation_add_message`. The Meko server extracts durable memories from successfully captured user turns. Users who do not want automatic transcript capture should install only the root `skills/` files manually and not install the plugin hooks.
 
