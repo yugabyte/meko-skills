@@ -102,7 +102,7 @@ scripts/
 
 The duplication between `skills/` and `plugins/meko-agent-skills/skills/` is intentional. Anthropic plugins are copied into a plugin cache and cannot reference files outside their plugin directory with paths like `../shared-utils`, so the plugin must carry its own skill copy.
 
-The behavioral guides cover all 23 Cloud Meko tools in six groups: memory (8), conversations (6), knowledge base (1), datapacks (5), artifacts (2), and observability (1). The selector skills add a durable active-datapack workflow for users with more than one datapack.
+The behavioral guides cover the 28 tools in Meko's core MCP catalog, in seven groups: retrieval (1), memory (8), conversations (6), knowledge base (4), datapacks (6), artifacts (2), and observability (1). They also describe tools that a server registers only when a feature is turned on: 4 self-learning tools and 14 AMP database tools. The number of tools a server lists depends on which of those features it has on. The selector skills add a durable active-datapack workflow for users with more than one datapack.
 
 | Skill | Best for | Key behavior |
 |---|---|---|
